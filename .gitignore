@@ -1,0 +1,43 @@
+yabause/src/android/res/values/security.xml
+/.gradle/
+/local.properties
+.DS_Store
+*.iml
+build/
+/*build/
+**/*build/*
+*.a
+*.so
+*.swp
+yabause/*build*/*
+yabause/ax86_64/*
+yabause/src/qt/firebase_cpp_sdk/*
+yabause/src/android/.settings/*
+yabause/src/android/app/.settings/*
+
+build-dev/
+build-diag/
+build-pgo-gen/
+build-dev/
+build-diag/
+
+# Local test builds and profiling directories
+yaba-*
+build-pgo-use/
+
+# Local backup copies
+*.vor-*
+*.mit-diag-*
+*.meshblend-versuch
+*.bak
+yabause/src/.sicherung-*/
+yabause/src/**/*.vor-*
+yabause/src/**/*.orig
+yabause/src/**/*.bak
+yabause/src/**/*.mit-diag*
+quell-sicherungen/
+yabause/src/retro_arena/bauinfo.h
+
+# Local build archive
+bisect-archiv/
+build-nopie/
