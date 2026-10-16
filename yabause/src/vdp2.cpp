@@ -46,7 +46,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <time.h>
 #include "vdp2.h"
 #include "debug.h"
-#include "framering.h"
+#include "instrument.h"
 #include "peripheral.h"
 #include "scu.h"
 #include "sh2core.h"
@@ -155,14 +155,9 @@ static int frameLimitShift = 0;
 //#define LOG yprintf
 #define PROFILE_RENDERING 0
 
-/* Must be at file scope: linkage specifications are only allowed at namespace scope, and the
-   definition in DynarecSh2.cpp has C linkage. */
-extern "C" void ZsBlockBericht(void);
 /* per-layer mask, defined in vidogl.c (C linkage) */
 extern "C" unsigned char g_nbgweg[5];
 extern "C" unsigned int g_perlineident_um;
-extern "C" void SH2DynUebersetzZeit(unsigned long long *, unsigned long long *, unsigned long long *, unsigned long long *);
-extern "C" unsigned long long g_uebhash[2][4];
 
 
 YabEventQueue * command_ = NULL;
@@ -212,17 +207,7 @@ unsigned long long g_eb_sleep_ns = 0;
 unsigned long long g_eb_ptmr_ns = 0;
 unsigned int       g_eb_ptmr_n  = 0;   /* entries per second */
 
-/* Defined in DynarecSh2.cpp with C linkage; declared extern "C" here too. */
-extern "C" unsigned int g_blk_eintritte;
-/* Declaration at file scope: extern "C" is not allowed inside a function body. */
-extern "C" void SH2DynUebersetzLetztesBild(unsigned long long *nm, unsigned long long *ns,
-                                           unsigned long long *vm, unsigned long long *vs);
-
-/* Idle-loop skips per CPU, read from the dynarec. Free-running counter; per-second differences
-   are taken with zaehl_diff. */
-extern "C" unsigned int SH2DynGetLoopskip(SH2_struct *context);
-/* Idle-loop counters: ls46 counts real idle skips (not the BIOS/undecoded returns that lsm also
-   counts); c2n/npn are table fill levels, c2v/npv discarded entries. */
+/* Idle-loop counters: ls46 counts real idle skips; c2v/npv discarded table entries (instrumentation). */
 extern unsigned int g_ls46_m, g_ls46_s, g_c2_verworfen, g_np_verworfen;
 /* Sound ring underruns per second (und) and missing bytes per second (undb). */
 extern unsigned int g_snd_unter, g_snd_unter_bytes;
@@ -233,29 +218,20 @@ extern unsigned int g_snd_dehn, g_snd_rufe, g_snd_rat_mil;
    is not skipped as idle). Free-running; per-second differences via zaehl_diff. The extern "C"
    specification must match the definition. */
 extern "C" unsigned long long g_wanderfix_abgelehnt;
-/* Dispatches of BLOCK_LOOP blocks per CPU. Unlike l46m (which counts returns) this counts entries. */
-extern "C" unsigned int g_blges_m, g_blges_s;
-extern "C" unsigned int g_blk_m, g_blk_s;
-/* Reasons why the CHAIN2 catch does not apply (master only): c2k candidates, c2zs blocked by
-   ZYKSLAVE, c2np partner mismatch, c2tr hits, c2na no adjacency block. Per second via zaehl_diff. */
-extern "C" unsigned int g_c2kand_m, g_c2zs_m, g_c2np_m, g_c2tr_m, g_c2noadj_m;
-extern "C" unsigned int g_c2kand_s, g_c2np_s, g_c2tr_s, g_c2noadj_s;
-extern "C" void SH2DynGetTische(unsigned int *c2, unsigned int *np);
 
 /* Defined in DynarecSh2.cpp (C++), read here without extern "C". Cumulative over the run, not a
    per-second difference. */
 
 
-/* Request chain counters: ptmr (game wants to draw) -> fbcr (game wants to swap) -> dend (render
-   thread reports done) -> vdp1 (swap happens). The counters are only reset in the FBCRDIAG block
-   (not built with YABA_NODIAG), so the difference is taken; a reset is detected by jetzt < *vorher
-   and the stored value is cleared with it. */
+/* Per-second difference of a free-running counter; a reset (jetzt < *vorher) clears the stored
+   value. */
 static inline unsigned int zaehl_diff(unsigned int jetzt, unsigned int *vorher) {
   unsigned int d;
   if (jetzt < *vorher) { d = jetzt; *vorher = 0; }  /* counter was reset */
   else                 { d = jetzt - *vorher; *vorher = jetzt; }
   return d;
 }
+#ifdef YABA_INSTRUMENT
 static inline void emublk_start(struct timespec *t0) {
   clock_gettime(CLOCK_MONOTONIC, t0);
 }
@@ -279,6 +255,13 @@ static inline void nurziel_ende(const struct timespec *t0,
   *ziel += (unsigned long long)(t1.tv_sec - t0->tv_sec) * 1000000000ULL
          + (unsigned long long)(t1.tv_nsec - t0->tv_nsec);
 }
+#else
+/* Without instrumentation the wall-clock timers compile to nothing. */
+static inline void emublk_start(struct timespec *) { }
+static inline void emublk_ende_an(const struct timespec *, unsigned long long *,
+                                  unsigned long long * = nullptr) { }
+static inline void nurziel_ende(const struct timespec *, unsigned long long *) { }
+#endif
 
 static int g_vinfrei = -1;
 static int vin_render_pending = 0;
@@ -1394,7 +1377,7 @@ void Vdp2HBlankOUT(void) {
   // (sprite flicker).
   if (Vdp2External.frame_render_flg == 0 && vdp1_clock>0 && yabsys.LineCount >= 5 ){ // Delay if vdp1 ram was written
     FrameProfileAdd("VOUT event");
-    vout_dispatch++;
+    INSTR(vout_dispatch++);
     Vdp2External.frame_render_flg = 1;
 #if defined(YAB_ASYNC_RENDERING)
     /* This join guards the single VDP1 snapshot buffer. */
@@ -1403,7 +1386,7 @@ void Vdp2HBlankOUT(void) {
     // Manual Change
     if (Vdp1External.manualchange == 1) {
       Vdp1External.swap_frame_buffer = 1;
-      swap_gesetzt++;
+      INSTR(swap_gesetzt++);
       Vdp1External.manualchange = 0;
     }
 
@@ -1411,7 +1394,7 @@ void Vdp2HBlankOUT(void) {
     if ((Vdp1Regs->FBCR & 0x03) == 0x00 ||
       (Vdp1Regs->FBCR & 0x03) == 0x01) {  // 0x01 is treated as one cyscle mode in Sonic R.
       Vdp1External.swap_frame_buffer = 1;
-      swap_gesetzt++;
+      INSTR(swap_gesetzt++);
     }
 
     // Plot trigger mode = Draw when frame is changed
@@ -1498,14 +1481,14 @@ void Vdp2HBlankOUT(void) {
         FRAMELOG("**WAIT END**");
         FrameProfileAdd("DirectDraw sync");        
         ScuSendDrawEnd();
-        drawend_gesendet++;
+        INSTR(drawend_gesendet++);
         FRAMELOG("Vdp1Draw end at %d line EDSR=%02X", yabsys.LineCount, Vdp1Regs->EDSR);
         yabsys.wait_line_count = -1;
         Vdp1Regs->EDSR |= 2;
       } else {
         yabsys.wait_line_count += 10;
         yabsys.wait_line_count %= yabsys.VBlankLineCount;
-        g_drawend_spaet++;
+        INSTR(g_drawend_spaet++);
         FRAMELOG("Vdp1Draw wait at %d line EDSR=%02X", yabsys.LineCount, Vdp1Regs->EDSR);
       }
   }
@@ -1518,7 +1501,7 @@ void Vdp2HBlankOUT(void) {
     //printf("COPR = %d at %d\n", Vdp1Regs->COPR, __LINE__);
     if ( Vdp1External.status == VDP1_STATUS_IDLE) {
       ScuSendDrawEnd();
-      drawend_gesendet++;
+      INSTR(drawend_gesendet++);
       FRAMELOG("Vdp1Draw end at %d line EDSR=%02X", yabsys.LineCount, Vdp1Regs->EDSR);
       yabsys.wait_line_count = -1;
       Vdp1Regs->EDSR |= 2;
@@ -1526,7 +1509,7 @@ void Vdp2HBlankOUT(void) {
     else {
       yabsys.wait_line_count += 10;
       yabsys.wait_line_count %= yabsys.VBlankLineCount;
-      g_drawend_spaet++;
+      INSTR(g_drawend_spaet++);
     }
     //VIDCore->Vdp1DrawEnd();
   }
@@ -1615,8 +1598,10 @@ static void FPSDisplay(void)
   /* The previous-value statics of these counters live here, so the reset further below can clear them
      together with the counters: zaehl_diff detects an external reset only by jetzt < *vorher, which
      fails for a constant rate. */
+#ifdef YABA_INSTRUMENT
   static unsigned int ptmr_vor = 0, fbcr_vor = 0, dend_vor = 0;
   static unsigned int swap_vor = 0, vout_vor = 0;
+#endif
   static int fpsframecount = 0;
   static u64 fpsticks;
   //yprintf("%02d/%02d FPS skip=%d vdp1=%02d", fps, yabsys.IsPal ? 50 : 60, show_skipped_frame, show_vdp1_frame);
@@ -1694,93 +1679,15 @@ static void FPSDisplay(void)
       show_vdp1_frame = vdp1_frame;       vdp1_frame = 0;
       show_skipped_frame = skipped_frame; skipped_frame = 0;
       {
-        /* gez = executed VDP1 draw commands; spaet = draw-end wait line postponed because VDP1 was not
-           finished. High gez with low vdp1 means the game draws but the buffer swaps do not get through; low
-           gez means the game really renders slowly. Appended as fields 6 and 7. */
-        extern unsigned int g_v1_gezeichnet;
-        extern unsigned int g_drawend_spaet;
-        extern unsigned long long g_emublk_ns;
-        /* emublk = milliseconds per second the emulation thread waited blocked for the render thread
-           (wall clock). */
-        extern unsigned long long g_eb_vin_ns, g_eb_join_ns, g_eb_draw_ns;
-        extern unsigned long long g_eb_jvin_ns, g_eb_jvout_ns, g_eb_jptmr_ns;
-        extern unsigned long long g_eb_sleep_ns, g_eb_ptmr_ns;
-        extern unsigned int       g_rbg_kopien, g_rbg_mapspaet;
-        extern unsigned long long g_rbg_copy_ns, g_rbg_map_ns;
-        /* Single items in ms/s: ebv = VIN rendezvous (Vdp2JoinPendingVIN), ebj = join barrier
-           (Vdp1JoinPendingRenders, twice per frame), ebd = draw-end wait. */
-        /* ebs = frame rate throttle (sleep + wait loop) on the render thread; ebv minus ebs is the real
-           render time. ebp = PTMR direct draw (overlaps with ebj). rbgn = 512 KB copies per second;
-           rbgc = ms/s for memcpy + unmap; rbgm = ms/s for glMapBufferRange; rbgsp = maps in the hot path
-           because onFinish had not pre-mapped. Fields are appended. */
-        /* ptmr/fbcr/dend as differences (see zaehl_diff) */
-        /* FBCR&3 tells who triggers the buffer swap: &2 == 0 one-cycle: swap at every VOUT dispatch (vdp1
-           is then an emulator quantity); &3 == 3 manual change: swap only when the game writes FBCR (vdp1 is
-           a game quantity); &3 == 2 manual erase: no swap. */
-        extern unsigned int ptmr_schreib, fbcr_schreib, drawend_gesendet;
-        extern unsigned int fbcr_letzt, ptmr_letzt;
-        extern unsigned int swap_gesetzt, vout_dispatch;
-        unsigned int d_ptmr = zaehl_diff(ptmr_schreib, &ptmr_vor);
-        unsigned int d_fbcr = zaehl_diff(fbcr_schreib, &fbcr_vor);
-        unsigned int d_dend = zaehl_diff(drawend_gesendet, &dend_vor);
-        /* Rejected wandering cycles per second. Free-running counter, so a difference as for
-           ptmr/fbcr/dend; the u32 cast is safe (at most thousands per second). */
-        static unsigned int wfab_vor = 0;
-        unsigned int d_wfab = zaehl_diff((unsigned int)g_wanderfix_abgelehnt, &wfab_vor);
-        /* swap against vdp1: does the emulation thread request swaps that do not reach the render thread?
-           vout counts VOUT dispatches; vout < fps is structurally impossible, so it doubles as a plausibility
-           check of the measurement. */
-        unsigned int d_swap = zaehl_diff(swap_gesetzt, &swap_vor);
-        unsigned int d_vout = zaehl_diff(vout_dispatch, &vout_vor);
-        /* fps counts VOUT dispatches, not emulated fields: FPSDisplay runs in vdp2VBlankOUT on the render
-           thread, only in reaction to a VDPEV_VBLANK_OUT event. That event is created behind the gate
-           frame_render_flg == 0 && vdp1_clock > 0 && LineCount >= 5; vdp1_clock is reset on every write to
-           VDP1 RAM, so a field in which the game writes to the command list throughout creates no event.
-           g_frame_count is incremented in Vdp2VBlankOUT on the emulation thread and counts emulated fields.
-           It is written on one thread and read on another, which is acceptable for a diagnostic value. */
-        /* Block entries per second. */
-        static unsigned int blk_vor = 0;
-        unsigned int blk_je_sek = zaehl_diff(g_blk_eintritte, &blk_vor);
-        static unsigned int blkm_vor = 0, blks_vor = 0;
-        unsigned int blkm_s = zaehl_diff(g_blk_m, &blkm_vor);
-        unsigned int blks_s = zaehl_diff(g_blk_s, &blks_vor);
-        /* per CPU, counted separately */
-        static unsigned int lsm_vor = 0, lss_vor = 0;
-        unsigned int ls_m = zaehl_diff(SH2DynGetLoopskip(MSH2), &lsm_vor);
-        unsigned int ls_s = zaehl_diff(SH2DynGetLoopskip(SSH2), &lss_vor);
-        /* ls46 as a difference (events per second); the table fill levels are absolute since they are a
-           state, not a rate. Full means c2n == 64 or npn == 256. */
-        static unsigned int l46m_vor = 0, l46s_vor = 0, c2v_vor = 0, npv_vor = 0;
-        /* Sound ring underruns per second, same pattern as l46m. */
-        static unsigned int snd_unter_vor = 0, snd_bytes_vor = 0;
-        static unsigned int snd_dehn_vor = 0, snd_rufe_vor = 0;
-        unsigned int snd_deh  = zaehl_diff(g_snd_dehn, &snd_dehn_vor);
-        unsigned int snd_ruf  = zaehl_diff(g_snd_rufe, &snd_rufe_vor);
-        unsigned int snd_und  = zaehl_diff(g_snd_unter, &snd_unter_vor);
-        unsigned int snd_undb = zaehl_diff(g_snd_unter_bytes, &snd_bytes_vor);
-        unsigned int l46_m = zaehl_diff(g_ls46_m, &l46m_vor);
-        unsigned int l46_s = zaehl_diff(g_ls46_s, &l46s_vor);
-        static unsigned int bgm_vor = 0, bgs_vor = 0;
-        static unsigned int c2k_vor=0, c2zs_vor=0, c2np_vor=0, c2tr_vor=0, c2na_vor=0;
-        static unsigned int c2ks_vor=0, c2nps_vor=0, c2trs_vor=0, c2nas_vor=0;
-        unsigned int bg_m = zaehl_diff(g_blges_m, &bgm_vor);
-        unsigned int bg_s = zaehl_diff(g_blges_s, &bgs_vor);
-        unsigned int c2_k  = zaehl_diff(g_c2kand_m,  &c2k_vor);
-        unsigned int c2_zs = zaehl_diff(g_c2zs_m,    &c2zs_vor);
-        unsigned int c2_np = zaehl_diff(g_c2np_m,    &c2np_vor);
-        unsigned int c2_tr = zaehl_diff(g_c2tr_m,    &c2tr_vor);
-        unsigned int c2_na = zaehl_diff(g_c2noadj_m, &c2na_vor);
-        unsigned int c2_ks  = zaehl_diff(g_c2kand_s,  &c2ks_vor);
-        unsigned int c2_nps = zaehl_diff(g_c2np_s,    &c2nps_vor);
-        unsigned int c2_trs = zaehl_diff(g_c2tr_s,    &c2trs_vor);
-        unsigned int c2_nas = zaehl_diff(g_c2noadj_s, &c2nas_vor);
-        unsigned int c2_v  = zaehl_diff(g_c2_verworfen, &c2v_vor);
-        unsigned int np_v  = zaehl_diff(g_np_verworfen, &npv_vor);
-        unsigned int c2_n = 0, np_n = 0;
-        SH2DynGetTische(&c2_n, &np_n);
+        /* Always needed: idle skips (l46_m) and emulated fields (d_feld) of the last second drive the
+           ZSERST adaptation below. The first difference is discarded (the counters run during BIOS and
+           loading). */
         extern int g_frame_count;
-        static unsigned int feld_vor = 0;
+        static unsigned int l46m_vor = 0, feld_vor = 0;
+        static int erstdiff = 1;
+        unsigned int l46_m = zaehl_diff(g_ls46_m, &l46m_vor);
         unsigned int d_feld = zaehl_diff((unsigned int)g_frame_count, &feld_vor);
+        if (erstdiff) { erstdiff = 0; l46_m = 0; d_feld = 0; }
         /* With ZSERST=2 this per-second step decides. Step k = 0..11: at k==0 ZSERST is off; at k==1 the
            second just completed ran without ZSERST, and saturation = l46m/(526 x feld) (526 = 2 time slices
            per line x 263 lines). It is enabled only if saturation < 20 % and feld < 55. */
@@ -1798,36 +1705,37 @@ static void FPSDisplay(void)
             k = (k + 1) % 12;
           }
         }
-        /* The first difference is the absolute value because all *_vor start at 0 (loopskip_cnt_ runs during
-           BIOS and loading and would yield a huge first value). Set it to 0: nothing is known about the time
-           before the first measurement. */
+#ifdef YABA_INSTRUMENT
+        /* One line per second with the development counters (rates per second, times in ms/s). */
         {
-          static int erstdiff = 1;
-          if (erstdiff) {
-            erstdiff = 0;
-            d_ptmr = d_fbcr = d_dend = d_swap = d_vout = 0;
-            blk_je_sek = 0; ls_m = 0; ls_s = 0; d_feld = 0;
-            blkm_s = 0; blks_s = 0;
-            l46_m = 0; l46_s = 0; c2_v = 0; np_v = 0;
-            c2_k = 0; c2_zs = 0; c2_np = 0; c2_tr = 0; c2_na = 0;
-            c2_ks = 0; c2_nps = 0; c2_trs = 0; c2_nas = 0;
-            bg_m = 0; bg_s = 0;
-          }
+          extern unsigned int g_v1_gezeichnet, g_drawend_spaet;
+          extern unsigned long long g_eb_vin_ns, g_eb_join_ns, g_eb_draw_ns, g_eb_sleep_ns, g_eb_ptmr_ns;
+          extern unsigned int g_rbg_kopien, g_rbg_mapspaet;
+          extern unsigned long long g_rbg_copy_ns, g_rbg_map_ns;
+          extern unsigned int ptmr_schreib, fbcr_schreib, drawend_gesendet, swap_gesetzt, vout_dispatch;
+          static unsigned int wfab_vor = 0, lss_vor = 0, und_vor = 0, deh_vor = 0, ruf_vor = 0;
+          fprintf(stderr, "INSTR: fps=%d vdp1=%d skip=%d feld=%u gez=%u l46m=%u l46s=%u emublk=%llu ebv=%llu ebj=%llu ebd=%llu "
+                  "ebs=%llu ebp=%llu ptmr=%u fbcr=%u dend=%u spaet=%u swap=%u vout=%u wfab=%u und=%u deh=%u ruf=%u rat=%u "
+                  "rbgn=%u rbgc=%llu rbgm=%llu rbgsp=%u c2v=%u npv=%u\n",
+                  fps, show_vdp1_frame, show_skipped_frame, d_feld, g_v1_gezeichnet, l46_m,
+                  zaehl_diff(g_ls46_s, &lss_vor), g_emublk_ns / 1000000ULL, g_eb_vin_ns / 1000000ULL,
+                  g_eb_join_ns / 1000000ULL, g_eb_draw_ns / 1000000ULL, g_eb_sleep_ns / 1000000ULL,
+                  g_eb_ptmr_ns / 1000000ULL, zaehl_diff(ptmr_schreib, &ptmr_vor), zaehl_diff(fbcr_schreib, &fbcr_vor),
+                  zaehl_diff(drawend_gesendet, &dend_vor), g_drawend_spaet, zaehl_diff(swap_gesetzt, &swap_vor),
+                  zaehl_diff(vout_dispatch, &vout_vor), zaehl_diff((unsigned int)g_wanderfix_abgelehnt, &wfab_vor),
+                  zaehl_diff(g_snd_unter, &und_vor), zaehl_diff(g_snd_dehn, &deh_vor), zaehl_diff(g_snd_rufe, &ruf_vor),
+                  g_snd_rat_mil, g_rbg_kopien, g_rbg_copy_ns / 1000000ULL, g_rbg_map_ns / 1000000ULL, g_rbg_mapspaet,
+                  g_c2_verworfen, g_np_verworfen);
+          g_nbgweg[0] = g_nbgweg[1] = g_nbgweg[2] = g_nbgweg[3] = g_nbgweg[4] = 0;
+          g_drawend_spaet = 0;
+          g_emublk_ns = 0;
+          g_eb_vin_ns = 0; g_eb_join_ns = 0; g_eb_draw_ns = 0;
+          g_eb_jvin_ns = 0; g_eb_jvout_ns = 0; g_eb_jptmr_ns = 0;
+          g_eb_sleep_ns = 0; g_eb_ptmr_ns = 0; g_eb_ptmr_n = 0;
+          g_rbg_kopien = 0; g_rbg_copy_ns = 0; g_rbg_map_ns = 0; g_rbg_mapspaet = 0;
+          fflush(stderr);
         }
-        /* Reset the mask every second, so that the line shows the state of this second and not the sum of
-           the run. */
-        g_nbgweg[0] = g_nbgweg[1] = g_nbgweg[2] = g_nbgweg[3] = g_nbgweg[4] = 0;
-        g_drawend_spaet = 0;
-        g_emublk_ns = 0;
-        g_eb_vin_ns = 0; g_eb_join_ns = 0; g_eb_draw_ns = 0;
-        g_eb_jvin_ns = 0; g_eb_jvout_ns = 0; g_eb_jptmr_ns = 0;
-        g_eb_sleep_ns = 0; g_eb_ptmr_ns = 0; g_eb_ptmr_n = 0;
-        g_rbg_kopien = 0; g_rbg_copy_ns = 0; g_rbg_map_ns = 0; g_rbg_mapspaet = 0;
-      }
-      {
-        /* Once per second: print the three blocks most often blocked by ZYKSLAVE. The function is empty in
-           the delivery build (YABA_NODIAG). */
-        ZsBlockBericht();
+#endif
       }
 
       /* Enable PERLINE only once the game has demonstrably booted instead of at start: enabling it during
@@ -1851,7 +1759,6 @@ static void FPSDisplay(void)
         g_v1_gezeichnet = 0;
 
       }
-      fflush(stderr);
       fpsframecount = 0;
       fps_t0 = fps_now;
     }

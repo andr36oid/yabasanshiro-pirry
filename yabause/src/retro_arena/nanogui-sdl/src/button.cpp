@@ -154,6 +154,18 @@ void Button::draw(NVGcontext *ctx) {
     nvgStrokeColor(ctx, mTheme->mBorderDark);
     nvgStroke(ctx);
 
+    /* A coloured background hides the focus gradient (its alpha goes to 0 above),
+       so a focused coloured button gets a white frame instead. */
+    if (mMouseFocus && mEnabled && mBackgroundColor.w() != 0) {
+        nvgBeginPath(ctx);
+        nvgStrokeWidth(ctx, 3.0f);
+        nvgRoundedRect(ctx, mPos.x() + 1.5f, mPos.y() + 1.5f, mSize.x() - 3,
+                       mSize.y() - 3, mTheme->mButtonCornerRadius);
+        nvgStrokeColor(ctx, nvgRGBA(255, 255, 255, 255));
+        nvgStroke(ctx);
+        nvgStrokeWidth(ctx, 1.0f);
+    }
+
     int fontSize = mFontSize == -1 ? mTheme->mButtonFontSize : mFontSize;
     nvgFontSize(ctx, fontSize);
     nvgFontFace(ctx, "sans-bold");

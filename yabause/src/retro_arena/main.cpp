@@ -78,6 +78,7 @@ extern "C" {
 #include "MenuScreen.h"
 extern "C" void SmpcSetSystemsprache(int id);   /* smpc.c */
 #include "Preference.h"
+#include "RetroAchievements.h"
 
 #define YUI_LOG printf
 
@@ -371,9 +372,8 @@ int yabauseinit()
     }
   }
   {
-    /* "mute cdda" config key: mute CD audio, keep sound effects. Handed to
-       the sound core through the environment (overwrite=0). */
-    setenv("YABA_MUTECDDA",  pre.getBool("mute cdda",  false) ? "1" : "0", 0);
+    /* "mute cdda" config key: mute CD audio, keep sound effects. */
+    ScspSetCddaMute(pre.getBool("mute cdda", false) ? 1 : 0);
   }
 
   res = YabauseInit(&yinit);
@@ -555,6 +555,9 @@ int main(int argc, char** argv)
   p->getBool( "Use compute shader" , true);
   delete p;
 
+  /* RetroAchievements login (background, no output) */
+  RA_Init();
+
 
   if( SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO) != 0 ) {
     printf("Fail to init SDL Bye! (%s)", SDL_GetError() );
@@ -627,6 +630,9 @@ int main(int argc, char** argv)
       return -1;
   }
 
+  /* Identify the disc for RetroAchievements (cdpath is final here). */
+  RA_LoadGame();
+
   p = new Preference(cdpath);
   VIDCore->Resize(0,0,width,height,1,p->getInt("Aspect rate",0));
   delete p;
@@ -698,6 +704,7 @@ int main(int argc, char** argv)
           glClear(GL_COLOR_BUFFER_BIT);
           SDL_GL_SwapWindow(wnd);
         }
+        RA_Shutdown();
         YabauseDeInit();
         GlSauberBeenden();
         return 0;
@@ -747,6 +754,7 @@ int main(int argc, char** argv)
 
       else if(e.type == evResetMenu){
         YabauseReset();
+        RA_OnReset();
         hideMenuScreen(); 
       }
 
@@ -791,6 +799,7 @@ int main(int argc, char** argv)
           free(e.user.data1);
         }
         Cs2ForceCloseTray(CDCORE_ISO, cdpath );
+        RA_OnDiscChanged();
         hideMenuScreen();     
       }
 
@@ -814,25 +823,29 @@ int main(int argc, char** argv)
         int rtn;
         YUI_LOG("MSG_LOAD_STATE");
 
-        // Find latest filename
-        sprintf(last_state_filename, "%s/%s_%d.yss", s_savepath, cdip->itemnum, e.user.code);
-        rtn = YabLoadState(last_state_filename);
-        switch(rtn){
-          case 0:
-          YUI_LOG("Load State: OK");
-          break;
-        case -1:
-          YUI_LOG("Load State: File Not Found");
-          break;
-        case -2:
-          YUI_LOG("Load State: Bad format");
-           break;
-        case -3:
-          YUI_LOG("Load State: Bad format deep inside");
-          break;                    
-        default:
-          YUI_LOG("Load State: Fail unkown");
-          break;                    
+        if (RA_HardcoreActive()) {
+          RA_ShowMessage("Load State disabled in Hardcore mode");
+        } else {
+          // Find latest filename
+          sprintf(last_state_filename, "%s/%s_%d.yss", s_savepath, cdip->itemnum, e.user.code);
+          rtn = YabLoadState(last_state_filename);
+          switch(rtn){
+            case 0:
+            YUI_LOG("Load State: OK");
+            break;
+          case -1:
+            YUI_LOG("Load State: File Not Found");
+            break;
+          case -2:
+            YUI_LOG("Load State: Bad format");
+             break;
+          case -3:
+            YUI_LOG("Load State: Bad format deep inside");
+            break;                    
+          default:
+            YUI_LOG("Load State: Fail unkown");
+            break;                    
+          }
         }
         hideMenuScreen();
       }
@@ -846,6 +859,7 @@ int main(int argc, char** argv)
 
     if( menu_show ){
 
+      RA_Idle();
       if( event_count > 0 ){
         glClearColor(0.0f, 0.0f, 0.0f, 1);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -858,8 +872,10 @@ int main(int argc, char** argv)
       //printf("Frmae = %d \n", 0, 0, frame_cont);
       //frame_cont++;
       YabauseExec(); // exec one frame
+      RA_DoFrame();
     }
   }
+  RA_Shutdown();
   YabauseDeInit();
   GlSauberBeenden();
   return 0;

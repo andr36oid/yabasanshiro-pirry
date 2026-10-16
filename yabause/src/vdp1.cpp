@@ -48,8 +48,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "yabause.h"
 #include "vdp1.h"
 #include "eperf.h"
+#include "instrument.h"
 #include "debug.h"
-#include "framering.h"
 #include "scu.h"
 #include "vdp2.h"
 #include "vidsoft.h"
@@ -554,7 +554,7 @@ extern "C" void FASTCALL Vdp1WriteWord(u32 addr, u16 val) {
     case 0x2:
       FRAMELOG("[VDP1] Write FCM=%d FCT=%d line = %d", (val & 0x02) >> 1, (val & 0x01), yabsys.LineCount);
       Vdp1Regs->FBCR = val;
-      fbcr_schreib++; fbcr_letzt = (unsigned int)(val & 0xFF);
+      INSTR(fbcr_schreib++); INSTR(fbcr_letzt = (unsigned int)(val & 0xFF));
       if ((Vdp1Regs->FBCR & 3) == 3) {
         //FRAMELOG("[VDP1] FCBR swtich to manual change");
         Vdp1External.manualchange = 1;
@@ -569,14 +569,17 @@ extern "C" void FASTCALL Vdp1WriteWord(u32 addr, u16 val) {
       //Vdp1Regs->COPR = 0;
       //printf("COPR = 0 at %d\n", __LINE__);
       Vdp1Regs->PTMR = val;
-      ptmr_schreib++; ptmr_letzt = (unsigned int)(val & 0xFF);
+      INSTR(ptmr_schreib++); INSTR(ptmr_letzt = (unsigned int)(val & 0xFF));
 #if YAB_ASYNC_RENDERING
       if (val == 1){ 
         FRAMELOG("[VDP1] VDPEV_DIRECT_DRAW %d/%d", YaGetQueueSize(vdp1_rcv_evqueue), yabsys.LineCount);
-        { extern unsigned long long g_eb_ptmr_ns;
+        {
+#ifdef YABA_INSTRUMENT
+          extern unsigned long long g_eb_ptmr_ns;
           extern unsigned int g_eb_ptmr_n;
           g_eb_ptmr_n++;
           struct timespec _p0, _p1; clock_gettime(CLOCK_MONOTONIC, &_p0);
+#endif
           { extern void Vdp1JoinPendingRendersC(void); Vdp1JoinPendingRendersC(); }
           if ( YaGetQueueSize(vdp1_rcv_evqueue) > 0){
             yabsys.wait_line_count = -1;
@@ -584,9 +587,12 @@ extern "C" void FASTCALL Vdp1WriteWord(u32 addr, u16 val) {
               YabWaitEventQueue(vdp1_rcv_evqueue);
             } while (YaGetQueueSize(vdp1_rcv_evqueue) != 0);
           }
+#ifdef YABA_INSTRUMENT
           clock_gettime(CLOCK_MONOTONIC, &_p1);
           g_eb_ptmr_ns += (unsigned long long)(_p1.tv_sec - _p0.tv_sec) * 1000000000ULL
-                        + (unsigned long long)(_p1.tv_nsec - _p0.tv_nsec); }
+                        + (unsigned long long)(_p1.tv_nsec - _p0.tv_nsec);
+#endif
+        }
         Vdp1Regs->EDSR >>= 1;
         yabsys.wait_line_count = yabsys.LineCount + 50;
         yabsys.wait_line_count %= yabsys.MaxLineCount;

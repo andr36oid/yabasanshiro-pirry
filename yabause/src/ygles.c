@@ -24,8 +24,6 @@
 #include "vidshared.h"
 extern u16 Vdp2TvmdFuerRender(void);   /* vdp2.cpp */
 #include "debug.h"
-#define FRAMERING_IMPL
-#include "framering.h"
 #include "frameprofile.h"
 #include "yglperf.h"
 /* The render thread reads the line registers through this pointer: live or from the snapshot (see vdp2.cpp). */
@@ -48,6 +46,8 @@ static void YglRenderDestinationAlpha(void);
 ;
 u32 *YglGetColorRamPointer();
 void YglRenderFrameBufferShadow();
+/* retro_arena only (nanovg_osdcore.c): RetroAchievements message, weak so other builds link */
+extern void OSDNanovgDrawRAOverlay(void) __attribute__((weak));
 
 void Ygl_uniformVDP2DrawFramebuffer_perline(void *p, float from, float to, u32 linetexture);
 
@@ -1734,7 +1734,6 @@ void YuiSetVideoAttribute(int type, int val)
 
 int YglInit(int width, int height, unsigned int depth)
 {
-  FrameRingInit();
   unsigned int i, j;
   void *dataPointer = NULL;
   YGLLOG("YglInit(%d,%d,%d);", width, height, depth);
@@ -4250,7 +4249,7 @@ void YglRenderFrameBuffer(int from, int to)
      Mednafen do. The 0.5 factor for line doubling (TVMD & 0xC0 == 0x80) belonged to the
      old geometry scaling and must not move into the texture coordinates. */
   YglMatrix result;
-  const int rotaktiv_1809 = (Vdp1Regs->TVMR & 0x02) ? 1 : 0;
+  const int rot_active = (Vdp1Regs->TVMR & 0x02) ? 1 : 0;
   memcpy(&result, &_Ygl->mtxModelView, sizeof(result));
   cwidth = _Ygl->rwidth;
   cheight = _Ygl->rheight;
@@ -4287,7 +4286,7 @@ void YglRenderFrameBuffer(int from, int to)
   /* Apply the rotation to the texture coordinates: the four corners of the quad are
      converted to source coordinates with the hardware formula; the order of the six
      entries stays as above (0,1,2 / 0,2,3). */
-  if (rotaktiv_1809)
+  if (rot_active)
   {
     const float sx = (Vdp1Regs->systemclipX2 > 0) ? (float)Vdp1Regs->systemclipX2 : 1.0f;
     const float sy = (Vdp1Regs->systemclipY2 > 0) ? (float)Vdp1Regs->systemclipY2 : 1.0f;
@@ -4965,6 +4964,9 @@ render_finish:
   glDisable(GL_STENCIL_TEST);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   OSDDisplayMessages(NULL, 0, 0);
+  /* RetroAchievements message, drawn every frame independent of the FPS OSD
+     (defined only in the retro_arena build) */
+  if (OSDNanovgDrawRAOverlay) OSDNanovgDrawRAOverlay();
   YGLPERF_END(comp, comp_ms);
 
   /* GPU backlog measurement that does not change the flow: set a fence at the end of the

@@ -22,7 +22,12 @@ multi-disc support via `.m3u`, and the extended in-game menu.
 Every fix applies to all games — there are no per-game hacks and no hidden
 runtime switches. What you build here is exactly the released emulator.
 
-Current version: **1.5.1**
+Since 1.6.0 the emulator supports [RetroAchievements](https://retroachievements.org)
+(rcheevos): login in the menu, achievement list, hardcore mode and leaderboards.
+Network access uses the system's libcurl, loaded at run time; without it the
+emulator runs as before. Nothing is sent unless you log in.
+
+Current version: **1.6.0**
 
 ## Building
 
@@ -50,8 +55,9 @@ cd yabasanshiro-pirry
 `--recursive` is required — it fetches the Eigen submodule used by the menu.
 If you already cloned without it: `git submodule update --init --recursive`.
 
-The first CMake run also downloads `nlohmann/json` from GitHub, so the build
-machine needs internet access.
+During the build CMake also downloads `libchdr`, `zlib` and `nlohmann/json`
+from GitHub and `libpng` from SourceForge, so the build machine needs internet
+access.
 
 ### 3. Configure
 
@@ -114,7 +120,9 @@ sudo chroot /srv/trixie-arm64 /bin/bash
 
 ## License
 
-GPL-2.0, like Yaba Sanshiro / Yabause — see [LICENSE](LICENSE).
+GPL-2.0-or-later, like Yaba Sanshiro / Yabause — see [LICENSE](LICENSE).
+The included third-party components and their licenses are listed in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Yaba Sanshiro is developed by devMiyax and builds on Yabause by the Yabause
 team. All credit for the emulator itself goes to them; this repository only

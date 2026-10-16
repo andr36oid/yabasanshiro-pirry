@@ -116,8 +116,9 @@ static int PerLineIstIdentitaet(vdp2draw_struct *info, int hoehe, int *h0, int *
   *h0 = H0; *v0 = V0;
   return 1;
 }
+#include "instrument.h"
 #define NBGWEG(pinfo, bit) \
-  do { if ((unsigned)(pinfo)->id < 5u) g_nbgweg[(pinfo)->id] |= (unsigned char)(bit); } while (0)
+  INSTR(((unsigned)(pinfo)->id < 5u) ? (g_nbgweg[(pinfo)->id] |= (unsigned char)(bit)) : 0)
 
 #define Y_MAX(a, b) ((a) > (b) ? (a) : (b))
 #define Y_MIN_FF(a, b) ((a) < (b) ? (a) : (b))
@@ -9188,16 +9189,6 @@ void YglGetGlSize(int *width, int *height)
 {
   *width = GlWidth;
   *height = GlHeight;
-}
-
-void YglGetOsdDiagInfo(int *originx, int *originy, int *rwidth, int *rheight, int *aspect_mode, int *res_mode)
-{
-  *originx = _Ygl->originx;
-  *originy = _Ygl->originy;
-  *rwidth = _Ygl->rwidth;
-  *rheight = _Ygl->rheight;
-  *aspect_mode = _Ygl->aspect_rate_mode;
-  *res_mode = _Ygl->resolution_mode;
 }
 
 void VIDOGLGetNativeResolution(int *width, int *height, int*interlace)

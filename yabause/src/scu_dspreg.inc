@@ -1,4 +1,4 @@
-/* Fast path of the SCU DSP interpreter (generated from scu.c; do not edit by hand).
+/* Fast path of the SCU DSP interpreter, a hand-specialised copy of the generic path in scu.c (keep both in sync).
    Interpreter state is kept in locals instead of memory: incFlg as a bit mask `inc`, flags Z/S/C in a local
    copy `pcp` (written back once per instruction), ALU in a local copy `alu`. The breakpoint loop is omitted
    (the caller uses the generic path when breakpoints are set); writed1busdest/writeloadimdest/readgensrc are

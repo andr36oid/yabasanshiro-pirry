@@ -1,3 +1,4 @@
+#include <string.h>
 #include <time.h>
 #include <stdio.h>
 /*  Copyright 2012 Guillaume Duhamel
@@ -303,14 +304,6 @@ void OSDNanovgDisplayMessage(OSDMessage_struct * message, pixel_t * buffer, int 
   
 
   if (message->type == OSDMSG_FPS) {
-    extern void YglGetOsdDiagInfo(int*,int*,int*,int*,int*,int*);
-    static struct timespec osd_last; static int osd_init = 0;
-    struct timespec osd_now; clock_gettime(CLOCK_MONOTONIC, &osd_now);
-    if (!osd_init || (osd_now.tv_sec - osd_last.tv_sec) >= 1) {
-      int ox, oy, rw, rh, am, rm;
-      YglGetOsdDiagInfo(&ox, &oy, &rw, &rh, &am, &rm);
-      osd_last = osd_now; osd_init = 1;
-    }
     LeftX = 8;
   }
   else if (message->type == OSDMSG_RECORD) {
@@ -381,6 +374,95 @@ void OSDNanovgDisplayMessage(OSDMessage_struct * message, pixel_t * buffer, int 
   nvgEndFrame(vg);
 
 }
+
+
+#if defined(__RETORO_ARENA__)
+/* RetroAchievements message and lasting indicators (retro_arena/RetroAchievements.cpp), thread safe */
+int RA_GetOverlayText(char *out, int maxlen);
+int RA_GetIndicatorText(char *out, int maxlen);
+
+/* Top right box, one line each: leaderboard trackers, challenge and progress indicators. */
+static void OSDNanovgDrawRAIndicators(const char *text, int vidwidth)
+{
+  const float fontsize = 22.0f, lh = 26.0f;
+  float bounds[4], w = 0.0f, bw, bh, bx, by = 8.0f;
+  const char *s = text, *e;
+  int n = 0;
+
+  nvgFontFace(vg, "sans");
+  nvgFontSize(vg, fontsize);
+  nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+  for (; *s; s = (*e ? e + 1 : e)) {
+    e = strchr(s, '\n');
+    if (e == NULL) e = s + strlen(s);
+    nvgTextBounds(vg, 0, 0, s, e, bounds);
+    if (bounds[2] - bounds[0] > w) w = bounds[2] - bounds[0];
+    n++;
+  }
+  bw = w + 16.0f;
+  bh = n * lh + 8.0f;
+  bx = vidwidth - bw - 8.0f;
+  nvgBeginPath(vg);
+  nvgRoundedRect(vg, bx, by, bw, bh, 6.0f);
+  nvgFillColor(vg, nvgRGBA(8, 8, 8, 160));
+  nvgFill(vg);
+  nvgFillColor(vg, nvgRGBA(255, 255, 255, 255));
+  n = 0;
+  for (s = text; *s; s = (*e ? e + 1 : e)) {
+    e = strchr(s, '\n');
+    if (e == NULL) e = s + strlen(s);
+    nvgText(vg, bx + 8.0f, by + 4.0f + n * lh, s, e);
+    n++;
+  }
+}
+
+/* Bottom center box with the current RetroAchievements message and the indicator box.
+   Called once per rendered frame from the render thread, does nothing without text. */
+void OSDNanovgDrawRAOverlay(void)
+{
+  char text[256], ind[512];
+  float bounds[4];
+  float fontsize = 32.0f;
+  float tw, bw, bh, bx, by;
+  int vidwidth, vidheight, has_msg, has_ind;
+
+  if (vg == NULL) return;
+  has_msg = RA_GetOverlayText(text, sizeof(text));
+  has_ind = RA_GetIndicatorText(ind, sizeof(ind));
+  if (!has_msg && !has_ind) return;
+
+  VIDCore->GetGlSize(&vidwidth, &vidheight);
+
+  nvgBeginFrame(vg, vidwidth, vidheight, 1.0f);
+  if (has_ind) OSDNanovgDrawRAIndicators(ind, vidwidth);
+  if (!has_msg) { nvgEndFrame(vg); return; }
+  nvgFontFace(vg, "sans");
+  nvgFontSize(vg, fontsize);
+  nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+  nvgTextBounds(vg, 0, 0, text, NULL, bounds);
+  tw = bounds[2] - bounds[0];
+  /* shrink the text if it does not fit */
+  if (tw > vidwidth - 32 && tw > 0) {
+    fontsize = fontsize * (vidwidth - 32) / tw;
+    nvgFontSize(vg, fontsize);
+    nvgTextBounds(vg, 0, 0, text, NULL, bounds);
+    tw = bounds[2] - bounds[0];
+  }
+  bw = tw + 24.0f;
+  bh = fontsize + 12.0f;
+  bx = (vidwidth - bw) / 2.0f;
+  by = vidheight - bh - 12.0f;
+
+  nvgBeginPath(vg);
+  nvgRoundedRect(vg, bx, by, bw, bh, 8.0f);
+  nvgFillColor(vg, nvgRGBA(8, 8, 8, 160));
+  nvgFill(vg);
+
+  nvgFillColor(vg, nvgRGBA(255, 255, 255, 255));
+  nvgText(vg, bx + 12.0f, by + bh / 2.0f, text, NULL);
+  nvgEndFrame(vg);
+}
+#endif
 
 
 #if 0

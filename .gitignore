@@ -15,29 +15,6 @@ yabause/src/qt/firebase_cpp_sdk/*
 yabause/src/android/.settings/*
 yabause/src/android/app/.settings/*
 
-build-dev/
-build-diag/
-build-pgo-gen/
-build-dev/
-build-diag/
-
-# Local test builds and profiling directories
+# Local build directories and binaries
+build*/
 yaba-*
-build-pgo-use/
-
-# Local backup copies
-*.vor-*
-*.mit-diag-*
-*.meshblend-versuch
-*.bak
-yabause/src/.sicherung-*/
-yabause/src/**/*.vor-*
-yabause/src/**/*.orig
-yabause/src/**/*.bak
-yabause/src/**/*.mit-diag*
-quell-sicherungen/
-yabause/src/retro_arena/bauinfo.h
-
-# Local build archive
-bisect-archiv/
-build-nopie/

@@ -65,15 +65,40 @@ set(yabause_ra_SOURCES
     MenuScreen.cpp
     Preference.h
     Preference.cpp
+    RetroAchievements.cpp
+    rcheevos/src/rc_client.c
+    rcheevos/src/rc_compat.c
+    rcheevos/src/rc_util.c
+    rcheevos/src/rc_version.c
+    rcheevos/src/rapi/rc_api_common.c
+    rcheevos/src/rapi/rc_api_info.c
+    rcheevos/src/rapi/rc_api_runtime.c
+    rcheevos/src/rapi/rc_api_user.c
+    rcheevos/src/rcheevos/alloc.c
+    rcheevos/src/rcheevos/condition.c
+    rcheevos/src/rcheevos/condset.c
+    rcheevos/src/rcheevos/consoleinfo.c
+    rcheevos/src/rcheevos/format.c
+    rcheevos/src/rcheevos/lboard.c
+    rcheevos/src/rcheevos/memref.c
+    rcheevos/src/rcheevos/operand.c
+    rcheevos/src/rcheevos/rc_validate.c
+    rcheevos/src/rcheevos/richpresence.c
+    rcheevos/src/rcheevos/runtime.c
+    rcheevos/src/rcheevos/runtime_progress.c
+    rcheevos/src/rcheevos/trigger.c
+    rcheevos/src/rcheevos/value.c
+    rcheevos/src/rhash/md5.c
     ../about.h
     ../about.c
 ) 
 link_directories( ${link_directories} ${LIBCHDR_LIB_DIR} )
-include_directories( ${PORT_INCLUDE_DIRS} ${Boost_INCLUDE_DIR} "nanogui-sdl/include" "nanogui-sdl/ext/eigen" )
+include_directories( ${PORT_INCLUDE_DIRS} ${Boost_INCLUDE_DIR} "nanogui-sdl/include" "nanogui-sdl/ext/eigen" "rcheevos/include" "rcheevos/src" )
 add_executable(yabause-retro-arena ${yabause_ra_SOURCES})
 target_link_libraries(yabause-retro-arena yabause  ${Boost_LIBRARIES} pugixml ${YABAUSE_LIBRARIES} ${PORT_LIBRARIES} nanogui stdc++fs  ${LIBCHDR_LIBRARIES} )
 target_link_libraries( yabause-retro-arena ${LIBCHDR_LIBRARIES} )
 target_link_libraries( yabause-retro-arena ${zlib_STATIC_LIBRARIES} )
+target_link_libraries( yabause-retro-arena dl pthread )   # RetroAchievements: libcurl via dlopen, login thread
 add_dependencies(yabause-retro-arena Json png zlib libchdr )
 yab_port_success(yabause-retro-arena)
 set_target_properties(yabause-retro-arena PROPERTIES OUTPUT_NAME yabasanshiro)

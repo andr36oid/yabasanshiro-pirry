@@ -1506,8 +1506,19 @@ int YabauseQuickLoadGame(void)
 
       // Now setup SH2 registers to start executing at ip code
       SH2GetRegisters(MSH2, &MSH2->regs);
-      MSH2->onchip.VCRC = 0x64 << 8;
+      // The real BIOS leaves all master SH2 on-chip interrupt vector
+      // registers programmed. Games rely on these defaults: Gungriffon II
+      // ends an SH2 DMA channel 1 transfer and waits for the handler it
+      // installed at vector 0x6C; with VCRDMA1 left at 0 the interrupt was
+      // lost and the master spun forever on a black screen.
+      MSH2->onchip.VCRA = 0x6061;
+      MSH2->onchip.VCRB = 0x6263;
+      MSH2->onchip.VCRC = 0x6465;
+      MSH2->onchip.VCRD = 0x6600;
       MSH2->onchip.VCRWDT = 0x6869;
+      MSH2->onchip.VCRDIV = 0x6E;
+      MSH2->onchip.VCRDMA0 = 0x6D;
+      MSH2->onchip.VCRDMA1 = 0x6C;
       MSH2->onchip.IPRB = 0x0F00;
       MSH2->regs.PC = 0x06002E00;
       MSH2->regs.R[15] = Cs2GetMasterStackAdress();

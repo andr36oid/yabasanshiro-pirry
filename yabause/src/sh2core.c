@@ -2679,6 +2679,33 @@ static int IcfNachAnheben(int syncCycle, int ziel_slave)
    return syncCycle;
 }
 
+/* Doorbell catch-up with the real cycle distance (dynarec only). The old way above raised the
+   catch-up blindly to 256 cycles even when the target CPU was already ahead, and the nested
+   cycles were never credited, so the target drifted further ahead on every doorbell. Sea Bass
+   Fishing hung at boot that way (target 9 cycles ahead, sent 265 cycles into the future), while
+   Last Bronx needs the catch-up. Now the target runs exactly up to the caller's position
+   (capped at 2048) and the cycles are credited to its next regular slice.
+   The interpreter keeps the old way. */
+#ifdef DYNAREC_DEVMIYAX
+extern long long SH2DynCyclesNow(SH2_struct *context);
+extern void SH2DynSyncCredit(SH2_struct *context, u32 n);
+static int SyncDynamic(void)
+{
+   return SH2Core && SH2Core->id == 3;   /* SH2CORE_DYNAMIC */
+}
+#else
+static long long SH2DynCyclesNow(SH2_struct *context) { (void)context; return 0; }
+static void SH2DynSyncCredit(SH2_struct *context, u32 n) { (void)context; (void)n; }
+static int SyncDynamic(void) { return 0; }
+#endif
+static int SyncDistance(SH2_struct *target)
+{
+   long long d = SH2DynCyclesNow(CurrentSH2) - SH2DynCyclesNow(target);
+   if (d <= 0) return 0;
+   if (d > 2048) d = 2048;
+   return (int)d;
+}
+
 void FASTCALL MSH2InputCaptureWriteWord(UNUSED u32 addr, UNUSED u16 data)
 {
    DbFeinAusloesen(1);
@@ -2712,12 +2739,17 @@ void FASTCALL MSH2InputCaptureWriteWord(UNUSED u32 addr, UNUSED u16 data)
       returns, so a nested run would re-execute the store. The length is the
       cycle difference to the calling SH2. */
    if (CurrentSH2->depth < 4 && MSH2->depth == 0 && CurrentSH2 != MSH2) {
-      int syncCycle = (int)(CurrentSH2->cycles - MSH2->cycles);
-      syncCycle = IcfNachAnheben(syncCycle, 0);
+      const int dyn = SyncDynamic();
+      int syncCycle;
+      if (dyn)
+         syncCycle = SyncDistance(MSH2);
+      else
+         syncCycle = IcfNachAnheben((int)(CurrentSH2->cycles - MSH2->cycles), 0);
       if (syncCycle > 0) {
          SH2_struct * tmpCurrentSH2 = CurrentSH2;
          tmpCurrentSH2->depth++;
          SH2Exec(MSH2, syncCycle);
+         if (dyn) SH2DynSyncCredit(MSH2, (u32)syncCycle);
          CurrentSH2 = tmpCurrentSH2;
          CurrentSH2->depth--;
       }
@@ -2768,12 +2800,17 @@ void FASTCALL SSH2InputCaptureWriteWord(UNUSED u32 addr, UNUSED u16 data)
    /* Demand-driven catch-up with a re-entrancy guard, as in
       MSH2InputCaptureWriteWord. */
    if (CurrentSH2->depth < 4 && SSH2->depth == 0 && CurrentSH2 != SSH2) {
-      int syncCycle = (int)(CurrentSH2->cycles - SSH2->cycles);
-      syncCycle = IcfNachAnheben(syncCycle, 1);
+      const int dyn = SyncDynamic();
+      int syncCycle;
+      if (dyn)
+         syncCycle = SyncDistance(SSH2);
+      else
+         syncCycle = IcfNachAnheben((int)(CurrentSH2->cycles - SSH2->cycles), 1);
       if (syncCycle > 0) {
          SH2_struct * tmpCurrentSH2 = CurrentSH2;
          tmpCurrentSH2->depth++;
          SH2Exec(SSH2, syncCycle);
+         if (dyn) SH2DynSyncCredit(SSH2, (u32)syncCycle);
          CurrentSH2 = tmpCurrentSH2;
          CurrentSH2->depth--;
       }

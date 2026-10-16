@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <SDL2/SDL_opengles2.h>
 #undef Success 
 #include "nanogui/screen.h"
+#include <nanogui/textbox.h>
 #include "nanovg.h"
 #include <string.h>
 #include <stack>
@@ -31,6 +32,8 @@ using json = nlohmann::json;
 
 
 #include "InputConfig.h"
+#include "RetroAchievements.h"
+#include <vector>
 
 using namespace nanogui;
 
@@ -152,6 +155,48 @@ public:
     nanogui::Label * snd_kern_hinweis_ = nullptr;    /* "needs emu restart" line below */
     void soundKernZeigen( int gewaehlt );
     void refreshConfigSwitches();
+    /* RetroAchievements login: status dialog + on-screen keyboard (d-pad). */
+    void showRetroAchievementsDialog( PopupButton *popup );
+    void raStatusUpdate( bool force );
+    void raAchOpen( Widget * from );
+    void raAchShowPage( int page );
+    void raKbOpen();
+    void raKbClose();
+    void raKbMove( int dr, int dc );
+    void raKbPress();
+    void raKbRefresh();
+    bool raKbKey( const std::string & keycode, int action );
+    PopupButton * ra_popup_btn_ = nullptr;
+    Popup * ra_popup_ = nullptr;
+    Label * ra_status_lbl_ = nullptr;
+    Button * ra_login_btn_ = nullptr;
+    Button * ra_logout_btn_ = nullptr;
+    Button * ra_mode_btn_ = nullptr;           /* Softcore / Hardcore toggle */
+    Button * ra_ach_btn_ = nullptr;            /* opens the achievement list */
+    Button * ra_ind_btn_ = nullptr;            /* indicator box on/off */
+    Button * ra_hcreset_btn_ = nullptr;        /* red Reset beside Mode while hardcore waits */
+    Label * ra_hc_lbl_ = nullptr;              /* red note: hardcore needs a reset */
+    Button * ra_ach_nav_[3] = { nullptr, nullptr, nullptr };  /* Next / Previous / Close in the list */
+    std::vector<RAAchievement> ra_ach_;        /* achievement list window: entries, page, widgets */
+    int ra_ach_page_ = 0;
+    Label * ra_ach_head_ = nullptr;
+    Label * ra_ach_rows_[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+    Label * ra_ach_icons_[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };  /* check / lock per row */
+    PopupButton * load_state_btn_ = nullptr;   /* disabled in hardcore mode */
+    std::string ra_status_text_;
+    Window * kb_window_ = nullptr;
+    TextBox * kb_display_ = nullptr;
+    Button * kb_eye_ = nullptr;
+    bool kb_show_pw_ = false;     /* eye toggled: password shown in clear text */
+    int kb_maxchars_ = 24;
+    struct KbKey { Button * btn; char ch; int special; };   /* special: 0 char, 1 shift, 2 delete, 3 OK, 4 cancel, 5 eye */
+    std::vector< std::vector<KbKey> > kb_rows_;
+    int kb_r_ = 0;
+    int kb_c_ = 0;
+    int kb_step_ = 0;            /* 0 = user name, 1 = password */
+    bool kb_shift_ = false;
+    std::string kb_text_;
+    std::string kb_user_;
     // Tint enabled toggle buttons green.
     static void tintToggle( Button * b, bool on );
 

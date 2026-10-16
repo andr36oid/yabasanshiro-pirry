@@ -189,6 +189,11 @@ void SH2DynDebugReset(SH2_struct *context) {
   pctx->ResetCPU();
 }
 
+/* Per-CPU cycle count since the last common point, used by the doorbell catch-up in sh2core.c.
+   context->cycles only holds the length of the last slice, so the difference of two of them is
+   not a cycle distance. A regular master slice (not a catch-up run from a slave doorbell) starts
+   when both CPUs have finished the previous step, so both counters restart there. */
+extern "C" { unsigned long long g_sync_cycles[2] = { 0, 0 }; }
 void FASTCALL SH2DynExec(SH2_struct *context, u32 cycles){
   DynarecSh2* pctx = ((DynarecSh2*)context->ext);
   // SH2DynExec can be re-entered from inside a compiled block (an FRT
@@ -196,9 +201,24 @@ void FASTCALL SH2DynExec(SH2_struct *context, u32 cycles){
   // context must be restored afterwards, otherwise the interrupted block
   // continues with the wrong CurrentContext and corrupts both CPUs' state.
   DynarecSh2* prev_ctx = DynarecSh2::CurrentContext;
+  if (!pctx->IsSlave() && (SSH2 == NULL || SSH2->depth == 0)) {
+    g_sync_cycles[0] = 0;
+    g_sync_cycles[1] = 0;
+  }
   pctx->SetCurrentContext();
   pctx->ExecuteCount(cycles);
   DynarecSh2::CurrentContext = prev_ctx;
+}
+
+/* Cycles this CPU has run since the common point, including the running slice. */
+extern "C" long long SH2DynCyclesNow(SH2_struct *context) {
+  DynarecSh2 *pctx = (DynarecSh2*)context->ext;
+  unsigned long long z = g_sync_cycles[pctx->IsSlave() ? 1 : 0];
+  if (DynarecSh2::CurrentContext == pctx) z += pctx->GET_COUNT();
+  return (long long)z;
+}
+extern "C" void SH2DynSyncCredit(SH2_struct *context, u32 n) {
+  ((DynarecSh2*)context->ext)->SyncCredit(n);
 }
 
 void SH2DynSendInterrupt(SH2_struct *context, u8 vector, u8 level){

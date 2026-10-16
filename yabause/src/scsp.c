@@ -158,8 +158,8 @@ pthread_mutex_t sync_mutex = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
 int use_new_scsp = 0;
-/* 1 = SCSP DSP off (no reverb, runs cooler), 0 = DSP on. Set at startup by main.cpp (YABA_DSPAUS or the per-game
-   config key `sound dsp`); the menu toggles it live. With the DSP off, DSP-only slots (DISDL 0, IMXL > 0, e.g. Grandia
+/* 1 = SCSP DSP off (no reverb, runs cooler), 0 = DSP on. Set at startup by main.cpp (per-game config key
+   `sound dsp`); the menu toggles it live. With the DSP off, DSP-only slots (DISDL 0, IMXL > 0, e.g. Grandia
    music) are output dry at the IMXL level so nothing goes silent. */
 int g_scsp_dspaus = 1;
 int new_scsp_outbuf_pos = 0;
@@ -5744,8 +5744,7 @@ void M68KExec(s32 cycles)
 
 /* `mute cdda`: CD music muted, sound effects stay. `cdda boost`: speed boost of the CD block when the ring is half empty;
    it prevents dropouts, but FAD-clocked games can play voice scenes up to twice as fast with it. */
-/* The value lives in a global (not a static cache) so the menu toggle takes effect immediately; it is also read in the
-   sample loop (44100/s), so there is no getenv in the hot path. */
+/* Set by the frontend from the game config (ScspSetCddaMute); also read in the sample loop (44100/s). */
 int g_cdda_mute = -1;
 void ScspSetCddaMute(int an) { g_cdda_mute = an ? 1 : 0; }
 /* `cd volume = 0` (menu "Sound Volume" -> CD Music -> OFF) takes the same hard path as `mute cdda`: the sectors are not
@@ -5754,11 +5753,7 @@ void ScspSetCddaMute(int an) { g_cdda_mute = an ? 1 : 0; }
    has refilled. Unlike the output loop (which must keep running while muted, or the ring would fill up), nothing
    arrives here when muted, so `cdda_out_left` does not grow. */
 static int CddaMute(void) {
-  if (g_cdda_mute < 0) {
-    const char *e = getenv("YABA_MUTECDDA");
-    g_cdda_mute = (e != NULL && atoi(e) != 0) ? 1 : 0;
-  }
-  return g_cdda_mute || g_cdda_vol == 0;
+  return g_cdda_mute > 0 || g_cdda_vol == 0;
 }
 
 void new_scsp_run_sample()

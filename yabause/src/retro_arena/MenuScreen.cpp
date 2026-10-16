@@ -27,16 +27,20 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <nanogui/messagedialog.h>
 #include <nanogui/combobox.h>
 #include <nanogui/vscrollpanel.h>
+#include <nanogui/textbox.h>
+#include <nanogui/entypo.h>
 #include "../config.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <vector>
 #include <string>
 // Forward declaration: the "Next Disc" button in the menu constructor uses this
 // helper, whose definition must follow `ends_with`.
-static std::vector<std::string> discliste_1209(const std::string & base_path);
+static std::vector<std::string> disc_list(const std::string & base_path);
 
 #include <experimental/filesystem>
 #include <ctime>
@@ -54,6 +58,7 @@ using namespace std;
 #include "about.h"
 
 #include "Preference.h"
+#include "RetroAchievements.h"
 
 #include "yabause.h"
 
@@ -73,6 +78,7 @@ extern int g_emulated_bios;
 int MenuScreen::onShow(){
   //setupPlayerPsuhButton( 0, player1, "Player1 Input Settings", &p1cb );
   //setupPlayerPsuhButton( 1, player2, "Player2 Input Settings", &p2cb );
+  return 0;
 }
 
 MenuScreen::MenuScreen( SDL_Window* pwindow, int rwidth, int rheight, const std::string & fname, const std::string & game )
@@ -88,11 +94,11 @@ MenuScreen::MenuScreen( SDL_Window* pwindow, int rwidth, int rheight, const std:
   std::string title = "Yaba Sanshiro "+ std::string(YAB_VERSION) +" Pirry Edition";
         window = new Window(this, title);
         window->setPosition(Vector2i(0, 0));
-        window->setLayout(new GroupLayout());
+        window->setLayout(new GroupLayout(6));
 
         tools = new Widget(window);
         pushActiveMenu(tools, nullptr );
-        tools->setLayout(new BoxLayout(Orientation::Vertical,Alignment::Middle, 0, 5));
+        tools->setLayout(new BoxLayout(Orientation::Vertical,Alignment::Middle, 0, 2));
         tools->setFixedWidth(256);
 
         PlayerConfig tmp;
@@ -140,6 +146,15 @@ MenuScreen::MenuScreen( SDL_Window* pwindow, int rwidth, int rheight, const std:
           pushActiveMenu(ps_sound->popup(), ps_sound);
         });
 
+        /* RetroAchievements login */
+        PopupButton * ps_ra = new PopupButton(tools, "RetroAchievements");
+        ps_ra->setFixedWidth(248);
+        showRetroAchievementsDialog(ps_ra);
+        ps_ra->setCallback([this,ps_ra]() {
+          raStatusUpdate(true);
+          pushActiveMenu(ps_ra->popup(), ps_ra);
+        });
+
         PopupButton * ps = new PopupButton(tools, "Save State");
         ps->setFixedWidth(248);
         ps->setCallback([this,ps]() {      
@@ -149,7 +164,9 @@ MenuScreen::MenuScreen( SDL_Window* pwindow, int rwidth, int rheight, const std:
 
         ps = new PopupButton(tools, "Load State");
         ps->setFixedWidth(248);
+        load_state_btn_ = ps;
         ps->setCallback([this,ps]() {      
+          if( RA_HardcoreActive() ) return;   /* disabled in hardcore mode */
           showLoadStateDialog( ps->popup());
           pushActiveMenu(ps->popup(),ps); 
         });
@@ -195,19 +212,20 @@ MenuScreen::MenuScreen( SDL_Window* pwindow, int rwidth, int rheight, const std:
         // Multi-disc games are stored as separate .chd files in one directory.
         // This is not an automatic switch: the Saturn gives no "insert disc 2"
         // signal, the game only polls the disc-change flag.
-        // With the HLE BIOS, closing the tray restarts the game from the new disc
-        // (YabauseQuickLoadGame); switching in mid-game needs a real BIOS (-b).
+        // With the HLE BIOS, closing the tray resets the system and boots the new disc
+        // (YabauseReset in Cs2ForceCloseTray). With a real BIOS (-b) the system currently
+        // drops to the BIOS menu; Start there boots the new disc (known issue).
         bNextDisc = new Button(tools, "Next Disc");
         bNextDisc->setFixedWidth(248);
         bNextDisc->setCallback([this]() {
           size_t pos = current_game_path_.find_last_of("/");
           if( pos == std::string::npos ) return;
           std::string base_path = current_game_path_.substr(0,pos);
-          std::vector<std::string> discs = discliste_1209(base_path);
+          std::vector<std::string> discs = disc_list(base_path);
           if( discs.size() < 2 ){
             // Single-disc title: nothing to switch. Do nothing rather than reinsert
             // the same disc, which would restart the game under the HLE BIOS.
-            MENU_LOG("Next Disc: nur %d Abbild(er) in %s -- nichts zu wechseln\n",
+            MENU_LOG("Next Disc: only %d image(s) in %s, nothing to switch\n",
                      (int)discs.size(), base_path.c_str());
             return;
           }
@@ -267,43 +285,53 @@ MenuScreen::MenuScreen( SDL_Window* pwindow, int rwidth, int rheight, const std:
           event.user.data2 = 0;
           SDL_PushEvent(&event);          
         });        
-#if 0
         Button *b4 = new Button(tools, "About");
         b4->setFixedWidth(248);
-        b4->setCallback([this,b4]() { 
-          int image_pix_size_w = this->width() / 2;
-          int image_pix_size_h = this->height() / 2;
-          imageWindow = new Window(this, "About");                                                                                                         
-          imageWindow->setPosition(Vector2i(0, 0));                                                                                                                   
-          imageWindow->setLayout(new GroupLayout(0,0,0));                                                                                                                     
-          GLTexture t;    
-          t.load(about_png,about_png_size);  
-          float scale = (float)image_pix_size_w / t.width();
-          //float offset = (t.width() - image_pix_size) / 2;
-          auto imageView = new ImageView(imageWindow,t);  
-          imageView->setScale(scale);
-          imageView->setFixedScale(true);
-          imageView->setFixedOffset(true);
-          imageView->setFixedWidth(image_pix_size_w);
-          imageView->setFixedHeight(image_pix_size_h);
-
+        b4->setCallback([this,b4]() {
+          imageWindow = new Window(this, "About");
+          imageWindow->setLayout(new GroupLayout(10, 4, 6, 0));
+          const int w = this->width() - 80;
+          auto line = [this, w](const std::string & s, int size) {
+            Label * l = new Label(imageWindow, s, "sans", size);
+            l->setFixedWidth(w);
+            return l;
+          };
+          /* the two project pages stand out: bold and coloured */
+          auto link = [&line](const std::string & s) {
+            Label * l = line(s, 18);
+            l->setFont("sans-bold");
+            l->setColor(Color(120, 200, 255, 255));
+          };
+          line("Yaba Sanshiro " + std::string(YAB_VERSION) + " Pirry Edition", 22);
+          line("Sega Saturn emulator for the R36S handheld, based on Yaba Sanshiro by devMiyax, "
+               "which is based on Yabause.", 16);
+          link("Source code: github.com/pirrypirrypirry/yabasanshiro-pirry");
+          link("Releases: github.com/pirrypirrypirry/yabasanshiro-pirry-release");
+          line("Thanks to devMiyax, the Yabause team and RetroAchievements (rcheevos).", 16);
+          line("License: GNU General Public License version 2 or later. Included components and "
+               "their licenses: THIRD-PARTY-NOTICES.md in the source code.", 16);
+          line("Privacy: nothing is sent unless you log in to RetroAchievements. Then the user name, "
+               "the password (only for the first login), the game disc hash, unlocks and the game status "
+               "go to retroachievements.org; the privacy policy of retroachievements.org applies there. "
+               "This program has no server and no telemetry. On the device only the user name and a "
+               "login token are kept, in ~/.yabasanshiro/retroachievements.cfg, until you log out.", 16);
           Button *btn = new Button(imageWindow, "Close");
-          btn->setCallback([this]() { 
+          btn->setCallback([this]() {
             this->popActiveMenu();
             if( this->imageWindow != nullptr ){
               this->imageWindow->dispose();
               this->imageWindow = nullptr;
             }
           });
-
           imageWindow->center();
           imageWindow->setModal(true);
           imageWindow->requestFocus();
-
           pushActiveMenu(imageWindow,b4);
-
         });
-#endif
+        /* 14 entries have to fit into 480 lines: slightly smaller buttons in the main menu. */
+        for (Widget * w : tools->children()) {
+          if (Button * b = dynamic_cast<Button *>(w)) b->setFontSize(19);
+        }
         player_configs_[0].player->focusEvent(true);
         player_configs_[0].player->mouseEnterEvent(player_configs_[0].player->absolutePosition(),true);
         mFocus = player_configs_[0].player;
@@ -334,7 +362,7 @@ inline bool ends_with(std::string const & value, std::string const & ending)
 
 // Collect the disc images of a directory in sorted order (readdir order is
 // filesystem dependent). Uses the same four extensions as showFileSelectDialog.
-static std::vector<std::string> discliste_1209(const std::string & base_path)
+static std::vector<std::string> disc_list(const std::string & base_path)
 {
   std::vector<std::string> liste;
   DIR *dir; struct dirent *ent;
@@ -455,6 +483,385 @@ void MenuScreen::showSoundDialog( PopupButton *parent ){
   snd_kern_neu_btn_->setCallback([this](){ soundKernStep(+1); });
   snd_kern_hinweis_ = new Label(popup, " ");
   soundKernZeigen(preference->getInt("sound dsp", 0) ? 1 : 0);
+}
+
+/* "RetroAchievements": status line, Login / Logout. */
+void MenuScreen::showRetroAchievementsDialog( PopupButton *parent ){
+  ra_popup_btn_ = parent;
+  Popup *popup = parent->popup();
+  ra_popup_ = popup;
+  popup->setLayout(new GroupLayout(4,2,2,2));
+
+  ra_status_lbl_ = new Label(popup, " ");
+  ra_status_lbl_->setFixedWidth(340);   /* the menu window ends at ~270 px, the popup starts 15 px right of it */
+  ra_login_btn_ = new Button(popup, "Login");
+  ra_login_btn_->setCallback([this](){ raKbOpen(); });
+  ra_logout_btn_ = new Button(popup, "Logout");
+  ra_logout_btn_->setCallback([this](){
+    RA_Logout();
+    raStatusUpdate(true);
+  });
+  ra_ach_btn_ = new Button(popup, "Achievements");
+  ra_ach_btn_->setCallback([this](){ raAchOpen(ra_ach_btn_); });
+  /* Mode with a red Reset button beside it while hardcore waits for the reset */
+  Widget * mode_row = new Widget(popup);
+  mode_row->setLayout(new BoxLayout(Orientation::Horizontal, Alignment::Middle, 0, 6));
+  ra_mode_btn_ = new Button(mode_row, "Mode: Softcore");
+  ra_mode_btn_->setFixedWidth(340);   /* 240 while the red Reset button is shown beside it */
+  ra_hcreset_btn_ = new Button(mode_row, "Reset");
+  ra_hcreset_btn_->setFixedWidth(94);
+  ra_hcreset_btn_->setTextColor(Color(255, 255, 255, 255));
+  ra_hcreset_btn_->setBackgroundColor(Color(200, 0, 0, 255));
+  ra_hcreset_btn_->setVisible(false);
+  ra_hcreset_btn_->setCallback([this]() {
+    this->popActiveMenu();   /* close the popup first, the reset event hides the menu */
+    SDL_Event event = {};
+    event.type = reset_;
+    SDL_PushEvent(&event);   /* same as the Reset entry of the main menu: the game restarts in hardcore */
+  });
+  ra_hc_lbl_ = new Label(popup, "Hardcore starts with a reset of the game: press the red Reset button.", "sans", 18);
+  ra_hc_lbl_->setFixedWidth(340);
+  ra_hc_lbl_->setColor(Color(255, 80, 80, 255));
+  ra_hc_lbl_->setVisible(false);
+  ra_mode_btn_->setCallback([this](){
+    RAStatus st;
+    RA_GetStatus(st);
+    RA_SetHardcore(!st.hardcore);
+    raStatusUpdate(true);
+  });
+  ra_ind_btn_ = new Button(popup, "Indicators: On");
+  ra_ind_btn_->setCallback([this](){
+    RAStatus st;
+    RA_GetStatus(st);
+    RA_SetIndicators(!st.indicators);
+    raStatusUpdate(true);
+  });
+  Label * hint = new Label(popup, "Hardcore: no Load State. Switching to Hardcore needs a reset of the game (red Reset button), switching back works at once. Or create ~/.yabasanshiro/retroachievements.cfg with username= and password=", "sans", 18);
+  hint->setFixedWidth(340);
+  ra_status_lbl_->setCaption("Not logged in");   /* refreshed when the dialog opens */
+}
+
+/* Achievement list of the running game, 6 entries per page. The menu moves the focus between buttons only,
+   so the pages are switched with buttons instead of a scroll panel. */
+void MenuScreen::raAchOpen( Widget * from ){
+  if( imageWindow != nullptr ) return;
+  RA_GetAchievements(ra_ach_);
+  ra_ach_page_ = 0;
+  imageWindow = new Window(this, "Achievements");
+  imageWindow->setLayout(new GroupLayout(10, 4, 6, 0));
+  const int w = this->width() - 80;
+  ra_ach_head_ = new Label(imageWindow, " ", "sans", 18);
+  ra_ach_head_->setFixedWidth(w);
+  for( int i = 0; i < 6; i++ ){
+    /* one row: status icon (green check / grey lock) + text */
+    Widget * row = new Widget(imageWindow);
+    row->setLayout(new BoxLayout(Orientation::Horizontal, Alignment::Middle, 0, 6));
+    ra_ach_icons_[i] = new Label(row, " ", "icons", 20);
+    ra_ach_icons_[i]->setFixedWidth(22);
+    ra_ach_rows_[i] = new Label(row, " ", "sans", 15);
+    ra_ach_rows_[i]->setFixedWidth(w - 28);
+  }
+  Button * next = new Button(imageWindow, "Next page");
+  next->setCallback([this](){ raAchShowPage(ra_ach_page_ + 1); });
+  Button * prev = new Button(imageWindow, "Previous page");
+  prev->setCallback([this](){ raAchShowPage(ra_ach_page_ - 1); });
+  Button * close = new Button(imageWindow, "Close");
+  ra_ach_nav_[0] = next; ra_ach_nav_[1] = prev; ra_ach_nav_[2] = close;
+  close->setCallback([this]() {
+    this->popActiveMenu();
+    if( this->imageWindow != nullptr ){
+      this->imageWindow->dispose();
+      this->imageWindow = nullptr;
+    }
+    ra_ach_head_ = nullptr;
+    for( int i = 0; i < 6; i++ ){ ra_ach_rows_[i] = nullptr; ra_ach_icons_[i] = nullptr; }
+    for( int i = 0; i < 3; i++ ) ra_ach_nav_[i] = nullptr;
+  });
+  raAchShowPage(0);
+  imageWindow->center();
+  imageWindow->setModal(true);
+  imageWindow->requestFocus();
+  pushActiveMenu(imageWindow, from);
+}
+
+void MenuScreen::raAchShowPage( int page ){
+  if( ra_ach_head_ == nullptr ) return;
+  const int n = (int)ra_ach_.size();
+  const int pages = n > 0 ? (n + 5) / 6 : 1;
+  if( page < 0 ) page = pages - 1;
+  if( page >= pages ) page = 0;
+  ra_ach_page_ = page;
+  RAStatus st;
+  RA_GetStatus(st);
+  std::stringstream hs;
+  if( n == 0 ) hs << "No achievements: log in and start a game that RetroAchievements knows.";
+  else hs << st.game_title << ": " << st.ach_unlocked << "/" << st.ach_total << "   page " << (page + 1) << "/" << pages;
+  ra_ach_head_->setCaption(hs.str());
+  for( int i = 0; i < 6; i++ ){
+    const int k = page * 6 + i;
+    if( k < n ){
+      const RAAchievement & a = ra_ach_[k];
+      std::stringstream ss;
+      ss << a.title << " (" << a.points << ")";
+      if( !a.unlocked && !a.progress.empty() ) ss << " [" << a.progress << "]";   /* measured progress */
+      ss << " - " << a.description;
+      ra_ach_rows_[i]->setCaption(ss.str());
+      ra_ach_rows_[i]->setColor(a.unlocked ? Color(255, 255) : Color(160, 255));
+      ra_ach_icons_[i]->setCaption(utf8(a.unlocked ? ENTYPO_ICON_CHECK : ENTYPO_ICON_LOCK).data());
+      ra_ach_icons_[i]->setColor(a.unlocked ? Color(60, 200, 80, 255) : Color(120, 255));
+    } else {
+      ra_ach_rows_[i]->setCaption(" ");
+      ra_ach_icons_[i]->setCaption(" ");
+    }
+  }
+  /* the text height changes from page to page: measure the window again */
+  if( imageWindow != nullptr ){
+    imageWindow->setSize(Vector2i(0, 0));
+    imageWindow->center();
+  }
+}
+
+void MenuScreen::raStatusUpdate( bool force ){
+  if( ra_status_lbl_ == nullptr ) return;
+  RAStatus st;
+  RA_GetStatus(st);
+  std::string t;
+  switch( st.state ){
+  case RA_LOGGING_IN: t = "Logging in..."; break;
+  case RA_LOGGED_IN: {
+    std::stringstream ss;
+    ss << "Logged in as " << st.name << " (" << st.score << " points)";
+    t = ss.str();
+    break;
+  }
+  case RA_ERROR: t = "Error: " + st.error; break;
+  case RA_NOT_AVAILABLE: t = "Error: " + st.error; break;
+  default: t = "Not logged in"; break;
+  }
+  if( st.state == RA_LOGGED_IN && st.game_loaded ){
+    std::stringstream ss;
+    ss << "\n" << st.game_title << ": " << st.ach_unlocked << "/" << st.ach_total;
+    t += ss.str();
+  }
+  if( ra_mode_btn_ != nullptr ){
+    ra_mode_btn_->setCaption( st.hardcore ? "Mode: Hardcore" : "Mode: Softcore" );
+    tintToggle( ra_mode_btn_, st.hardcore );
+  }
+  if( ra_ind_btn_ != nullptr ){
+    ra_ind_btn_->setCaption( st.indicators ? "Indicators: On" : "Indicators: Off" );
+    tintToggle( ra_ind_btn_, st.indicators );
+  }
+  /* Load State follows the mode at once (hardcore -> casual is allowed mid-session) */
+  if( load_state_btn_ != nullptr ) load_state_btn_->setEnabled( !RA_HardcoreActive() );
+  /* red Reset + note while hardcore waits for the reset */
+  if( ra_hcreset_btn_ != nullptr && ra_hc_lbl_ != nullptr ){
+    const bool pend = RA_HardcorePending();
+    if( ra_hcreset_btn_->visible() != pend ){
+      ra_hcreset_btn_->setVisible(pend);
+      ra_hc_lbl_->setVisible(pend);
+      ra_mode_btn_->setFixedWidth(pend ? 240 : 340);
+      if( !pend && mFocus == ra_hcreset_btn_ ){ mFocus = ra_mode_btn_; ra_mode_btn_->mouseEnterEvent(ra_mode_btn_->position(), true); }
+      force = true;   /* layout below */
+    }
+  }
+  /* the popup sits at the top of the screen (more room); the arrow still points at its button */
+  if( ra_popup_ != nullptr ) ra_popup_->setAnchorHeight( std::max(30, ra_popup_->anchorPos().y() - 8) );
+  if( !force && t == ra_status_text_ ) return;
+  ra_status_text_ = t;
+  ra_status_lbl_->setCaption(t);
+  performLayout();   /* the label may wrap to a different height */
+}
+
+/* ---- on-screen keyboard (large buttons, d-pad focus) ---- */
+
+void MenuScreen::raKbOpen(){
+  if( kb_window_ != nullptr ) return;
+  const char * rows[5] = { "1234567890", "qwertyuiop", "asdfghjkl.", "zxcvbnm_-@", "!?#$%&*+=" };
+  const int kw = 54, kh = 44, gap = 4, margin = 12, head = 36;
+  const int ww = margin * 2 + 10 * kw + 9 * gap;
+  const int wh = head + 8 + kh + 8 + 6 * (kh + gap) + margin;
+
+  kb_step_ = 0;
+  kb_shift_ = false;
+  kb_show_pw_ = false;
+  kb_text_.clear();
+  kb_user_.clear();
+  kb_rows_.clear();
+
+  kb_window_ = new Window(this, "RetroAchievements: Username");
+  kb_window_->setFixedSize(Vector2i(ww, wh));
+  kb_window_->setPosition(Vector2i((this->size()[0] - ww) / 2, std::max(0, (this->size()[1] - wh) / 2)));
+
+  const int fw = 10 * kw + 9 * gap - kw - gap;   /* field + eye = width of the key rows */
+  kb_display_ = new TextBox(kb_window_, "");
+  kb_display_->setEditable(false);
+  kb_display_->setAlignment(TextBox::Alignment::Left);
+  kb_display_->setFontSize(28);
+  kb_display_->setPosition(Vector2i(margin, head + 8));
+  kb_display_->setFixedSize(Vector2i(fw, kh));
+  kb_maxchars_ = std::max(8, (fw - 24) / 15);
+  kb_eye_ = new Button(kb_window_, "", ENTYPO_ICON_EYE);
+  kb_eye_->setFontSize(26);
+  kb_eye_->setPosition(Vector2i(margin + fw + gap, head + 8));
+  kb_eye_->setFixedSize(Vector2i(kw, kh));
+  {
+    std::vector<KbKey> row;
+    KbKey k; k.btn = kb_eye_; k.ch = 0; k.special = 5;
+    row.push_back(k);
+    kb_rows_.push_back(row);   /* row 0: eye, only reachable while typing the password */
+  }
+
+  int y = head + 8 + kh + 8;
+  for( int r = 0; r < 5; r++ ){
+    std::vector<KbKey> row;
+    int n = (int)strlen(rows[r]);
+    for( int i = 0; i < n; i++ ){
+      std::string cap(1, rows[r][i]);
+      Button * b = new Button(kb_window_, cap);
+      b->setFontSize(26);
+      b->setPosition(Vector2i(margin + i * (kw + gap), y));
+      b->setFixedSize(Vector2i(kw, kh));
+      KbKey k; k.btn = b; k.ch = rows[r][i]; k.special = 0;
+      row.push_back(k);
+    }
+    kb_rows_.push_back(row);
+    y += kh + gap;
+  }
+  /* control row: Shift, Delete, OK, Cancel */
+  const char * caps[4] = { "Shift", "Delete", "OK", "Cancel" };
+  const int cw = (10 * kw + 9 * gap - 3 * gap) / 4;
+  std::vector<KbKey> row;
+  for( int i = 0; i < 4; i++ ){
+    Button * b = new Button(kb_window_, caps[i]);
+    b->setFontSize(24);
+    b->setPosition(Vector2i(margin + i * (cw + gap), y));
+    b->setFixedSize(Vector2i(cw, kh));
+    KbKey k; k.btn = b; k.ch = 0; k.special = i + 1;
+    row.push_back(k);
+  }
+  kb_rows_.push_back(row);
+
+  kb_window_->setModal(true);
+  kb_window_->requestFocus();
+  performLayout();
+
+  /* focus moves from the Login button to the first key */
+  if( mFocus != nullptr ) mFocus->mouseEnterEvent(mFocus->position(), false);
+  kb_r_ = 1; kb_c_ = 0;
+  mFocus = kb_rows_[1][0].btn;
+  mFocus->mouseEnterEvent(mFocus->position(), true);
+  raKbRefresh();
+}
+
+void MenuScreen::raKbClose(){
+  if( kb_window_ == nullptr ) return;
+  if( mFocus != nullptr ) mFocus->mouseEnterEvent(mFocus->position(), false);
+  kb_rows_.clear();
+  kb_display_ = nullptr;
+  kb_eye_ = nullptr;
+  kb_show_pw_ = false;
+  Window * w = kb_window_;
+  kb_window_ = nullptr;
+  /* wipe the typed secrets */
+  for( size_t i = 0; i < kb_text_.size(); i++ ) kb_text_[i] = ' ';
+  kb_text_.clear();
+  kb_user_.clear();
+  mFocus = ra_login_btn_;
+  if( mFocus != nullptr ){
+    mFocus->mouseEnterEvent(mFocus->position(), true);
+    mFocus->requestFocus();
+  }
+  w->dispose();
+}
+
+/* text field: password masked, long text shows its tail */
+void MenuScreen::raKbRefresh(){
+  if( kb_display_ == nullptr ) return;
+  std::string s = (kb_step_ == 1 && !kb_show_pw_) ? std::string(kb_text_.size(), '*') : kb_text_;
+  if( (int)s.size() > kb_maxchars_ ) s = "..." + s.substr(s.size() - (kb_maxchars_ - 3));
+  kb_display_->setValue(s + "_");
+  if( kb_eye_ != nullptr ){
+    kb_eye_->setVisible(kb_step_ == 1);
+    tintToggle(kb_eye_, kb_show_pw_);
+  }
+  if( kb_window_ != nullptr )
+    kb_window_->setTitle(kb_step_ == 0 ? "RetroAchievements: Username" : "RetroAchievements: Password");
+  /* letter case follows Shift */
+  for( size_t r = 0; r < kb_rows_.size(); r++ )
+    for( size_t i = 0; i < kb_rows_[r].size(); i++ ){
+      KbKey & k = kb_rows_[r][i];
+      if( k.special == 0 && k.ch >= 'a' && k.ch <= 'z' )
+        k.btn->setCaption(std::string(1, kb_shift_ ? (char)(k.ch - 'a' + 'A') : k.ch));
+    }
+}
+
+void MenuScreen::raKbMove( int dr, int dc ){
+  if( kb_rows_.empty() ) return;
+  int nr = kb_r_, nc = kb_c_;
+  if( dr != 0 ){
+    /* nearest button by horizontal centre in the target row */
+    nr = (kb_r_ + dr + (int)kb_rows_.size()) % (int)kb_rows_.size();
+    if( nr == 0 && kb_step_ == 0 ) nr = (nr + dr + (int)kb_rows_.size()) % (int)kb_rows_.size();
+    Button * cur = kb_rows_[kb_r_][kb_c_].btn;
+    int cx = cur->position().x() + cur->size().x() / 2;
+    int best = 1 << 30;
+    for( size_t i = 0; i < kb_rows_[nr].size(); i++ ){
+      Button * b = kb_rows_[nr][i].btn;
+      int d = std::abs(b->position().x() + b->size().x() / 2 - cx);
+      if( d < best ){ best = d; nc = (int)i; }
+    }
+  }else{
+    int n = (int)kb_rows_[kb_r_].size();
+    nc = (kb_c_ + dc + n) % n;
+  }
+  mFocus->mouseEnterEvent(mFocus->position(), false);
+  kb_r_ = nr; kb_c_ = nc;
+  mFocus = kb_rows_[kb_r_][kb_c_].btn;
+  mFocus->mouseEnterEvent(mFocus->position(), true);
+}
+
+void MenuScreen::raKbPress(){
+  KbKey k = kb_rows_[kb_r_][kb_c_];
+  switch( k.special ){
+  case 0:
+    if( kb_text_.size() < 64 )
+      kb_text_ += (kb_shift_ && k.ch >= 'a' && k.ch <= 'z') ? (char)(k.ch - 'a' + 'A') : k.ch;
+    break;
+  case 1: kb_shift_ = !kb_shift_; break;
+  case 2: if( !kb_text_.empty() ) kb_text_.erase(kb_text_.size() - 1); break;
+  case 3:   /* OK */
+    if( kb_text_.empty() ) break;
+    if( kb_step_ == 0 ){
+      kb_user_ = kb_text_;
+      kb_text_.clear();
+      kb_step_ = 1;
+      kb_shift_ = false;
+      kb_show_pw_ = false;   /* password starts hidden */
+    }else{
+      std::string u = kb_user_, p = kb_text_;
+      raKbClose();
+      RA_LoginWithPassword(u, p);
+      for( size_t i = 0; i < p.size(); i++ ) p[i] = ' ';
+      raStatusUpdate(true);
+      return;
+    }
+    break;
+  case 4: raKbClose(); return;   /* Cancel */
+  case 5: kb_show_pw_ = !kb_show_pw_; break;   /* eye: show / hide the password */
+  }
+  raKbRefresh();
+}
+
+/* Input while the keyboard is open: d-pad moves, A presses (B = Cancel is
+   handled in onBackButtonPressed). */
+bool MenuScreen::raKbKey( const std::string & keycode, int action ){
+  if( action == 0 ) return false;
+  if( keycode.find("down") != string::npos ) raKbMove(1, 0);
+  else if( keycode.find("up") != string::npos ) raKbMove(-1, 0);
+  else if( keycode.find("left") != string::npos ) raKbMove(0, -1);
+  else if( keycode.find("right") != string::npos ) raKbMove(0, 1);
+  else if( keycode == "a" ) raKbPress();
+  return false;
 }
 
 void MenuScreen::showConfigDialog( PopupButton *parent ){
@@ -617,6 +1024,7 @@ void MenuScreen::refreshConfigSwitches(){
   // the preference file is re-read here and only mirrored into the widgets
   // (setPushed()/setSelectedIndex()); no preference->setXXX()/VideoSetSetting()
   // calls are made, those stay with the existing callbacks.
+  if( load_state_btn_ != nullptr ) load_state_btn_->setEnabled( !RA_HardcoreActive() );
   if( cfg_compute_shader_btn_ == nullptr ) return;
 
   std::shared_ptr<Preference> preference(new Preference( current_game_path_ ));
@@ -1242,6 +1650,39 @@ bool MenuScreen::keyboardEvent( std::string & keycode , int scancode, int action
 
   if( swindow != nullptr && swindow->title() != "Select File"){ return false; }
 
+  /* on-screen keyboard has all input while it is open */
+  if( kb_window_ != nullptr ) return raKbKey(keycode, action);
+
+  /* RetroAchievements dialog: up/down cycles through its buttons
+     (the labels in the popup must not take the focus) */
+  if( action != 0 && ra_popup_ != nullptr && getActiveMenu() == ra_popup_ &&
+      (keycode.find("up") != string::npos || keycode.find("down") != string::npos) ){
+    /* cycle Login -> Logout -> Achievements -> Mode -> (Reset) -> Indicators */
+    bool up = keycode.find("up") != string::npos;
+    Button * all[6] = { ra_login_btn_, ra_logout_btn_, ra_ach_btn_, ra_mode_btn_, ra_hcreset_btn_, ra_ind_btn_ };
+    Button * cyc[6];
+    int n = 0, cur = 0;
+    for( int i = 0; i < 6; i++ ) if( all[i] != nullptr && all[i]->visible() ) cyc[n++] = all[i];
+    for( int i = 0; i < n; i++ ) if( mFocus == cyc[i] ) cur = i;
+    Button * to = cyc[ (cur + (up ? n - 1 : 1)) % n ];
+    mFocus->mouseEnterEvent(mFocus->position(), false);
+    mFocus = to;
+    mFocus->mouseEnterEvent(mFocus->position(), true);
+    return false;
+  }
+
+  /* achievement list: up/down cycles Next page -> Previous page -> Close (the rows are labels) */
+  if( action != 0 && ra_ach_nav_[0] != nullptr && imageWindow != nullptr && getActiveMenu() == imageWindow &&
+      (keycode.find("up") != string::npos || keycode.find("down") != string::npos) ){
+    bool up = keycode.find("up") != string::npos;
+    int cur = 0;
+    for( int i = 0; i < 3; i++ ) if( mFocus == ra_ach_nav_[i] ) cur = i;
+    mFocus->mouseEnterEvent(mFocus->position(), false);
+    mFocus = ra_ach_nav_[ (cur + (up ? 2 : 1)) % 3 ];
+    mFocus->mouseEnterEvent(mFocus->position(), true);
+    return false;
+  }
+
   MENU_LOG("%s %d %d\n",keycode.c_str(),scancode,action);
   if (action != 0) {
           
@@ -1357,6 +1798,8 @@ void MenuScreen::draw(NVGcontext *ctx){
 		nvgFill(ctx);
     nvgRestore(ctx);
   }
+
+  if( ra_popup_ != nullptr && ra_popup_->visible() ) raStatusUpdate(false);
 
   //window->center();
   Screen::draw(ctx);
@@ -1495,6 +1938,11 @@ Widget * MenuScreen::getActiveMenu(){
 
 int MenuScreen::onBackButtonPressed(){
   MENU_LOG("onBackButtonPressed\n");
+
+  if( kb_window_ != nullptr ){   /* B = Cancel in the on-screen keyboard */
+    raKbClose();
+    return 1;
+  }
   
   if( swindow != nullptr ){
 
@@ -1510,6 +1958,9 @@ int MenuScreen::onBackButtonPressed(){
     this->popActiveMenu();
     imageWindow->dispose();
     imageWindow = nullptr;    
+    ra_ach_head_ = nullptr;   /* the achievement list may have been this window */
+    for( int i = 0; i < 6; i++ ){ ra_ach_rows_[i] = nullptr; ra_ach_icons_[i] = nullptr; }
+    for( int i = 0; i < 3; i++ ) ra_ach_nav_[i] = nullptr;
     return 1;
   }
   

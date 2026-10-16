@@ -487,6 +487,8 @@ public:
   void SetSlave(bool is_slave) { is_slave_ = is_slave; }
   void SetContext(SH2_struct * ctx) { ctx_= ctx;}
   bool IsSlave() { return is_slave_;  }
+  // Credit cycles run by a nested doorbell catch-up to the next regular slice.
+  void SyncCredit(u32 n) { pre_exe_count_ += n; }
 
   dlstIntct m_IntruptTbl;
   void RemoveInterrupt(u8 Vector, u8 level);

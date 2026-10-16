@@ -1,5 +1,5 @@
 /*
-        Copyright 2026
+        Copyright 2026 pirrypirrypirry
 
     This file is part of YabaSanshiro.
 

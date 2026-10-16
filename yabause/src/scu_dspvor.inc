@@ -1,4 +1,4 @@
-/* Fast path 2 of the SCU DSP interpreter (generated; do not edit by hand).
+/* Fast path 2 of the SCU DSP interpreter, hand-specialised from the generic path in scu.c (keep both in sync).
    Stage A: PC, CT, RX, RY, AC, P, ALU, ProgControlPort and jmpaddr live in locals for the whole loop as an exact
      mirror of the memory state: everything is written back before any external call (DV_SYNC) and reloaded
      afterwards (DV_LOAD). TOP, LOP, delayed, RA0, WA0, dsp_dma_wait, MD and ProgramRam stay in memory. CT is packed

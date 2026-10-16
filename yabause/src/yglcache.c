@@ -44,7 +44,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "vidshared.h"
 #include "vdp1.h"
 #include "vdp2.h"
-#include <stdlib.h> /* getenv/atoi (NOCACHE) */
+#include <stdlib.h>
 
 int g_texcache_persist = 0;
 /* Bumped whenever SPCTL or CCCTL change (see ygl.h); cached VDP1 textures

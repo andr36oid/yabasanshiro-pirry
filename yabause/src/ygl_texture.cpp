@@ -41,12 +41,18 @@ unsigned int       g_rbg_kopien   = 0;
 unsigned long long g_rbg_copy_ns  = 0;
 unsigned long long g_rbg_map_ns   = 0;
 unsigned int       g_rbg_mapspaet = 0;
+#include "instrument.h"
+#ifdef YABA_INSTRUMENT
 static inline void rbg_t0(struct timespec *t) { clock_gettime(CLOCK_MONOTONIC, t); }
 static inline void rbg_t1(const struct timespec *t0, unsigned long long *ziel) {
   struct timespec t1; clock_gettime(CLOCK_MONOTONIC, &t1);
   *ziel += (unsigned long long)(t1.tv_sec - t0->tv_sec) * 1000000000ULL
          + (unsigned long long)(t1.tv_nsec - t0->tv_nsec);
 }
+#else
+static inline void rbg_t0(struct timespec *) { }
+static inline void rbg_t1(const struct timespec *, unsigned long long *) { }
+#endif
 
 
 #if defined(HAVE_VULKAN)
@@ -2712,7 +2718,7 @@ public:
     //glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 0x80000, (void*)Vdp2RamRender);
     { struct timespec _r0;
       if (mapped_vram == nullptr) {
-        g_rbg_mapspaet++;      /* onFinish() did not premap: blocks here */
+        INSTR(g_rbg_mapspaet++);      /* onFinish() did not premap: blocks here */
         rbg_t0(&_r0);
         mapped_vram = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 0x80000, GL_MAP_WRITE_BIT);
         rbg_t1(&_r0, &g_rbg_map_ns);
@@ -2721,7 +2727,7 @@ public:
       memcpy(mapped_vram, Vdp2RamRender, 0x80000);
       glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
       rbg_t1(&_r0, &g_rbg_copy_ns);
-      g_rbg_kopien++;
+      INSTR(g_rbg_kopien++);
       mapped_vram = nullptr; }
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo_vram_);
     ErrorHandle("glBindBufferBase");

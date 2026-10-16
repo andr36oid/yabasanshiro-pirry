@@ -21,12 +21,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "../instrument.h"
 
-/* The release build is compiled without diagnostic code. The diagnostic
-   checks sit in the hot execution path and run every frame, so they cost
-   frame rate even when switched off. With a constant false the compiler
-   removes the blocks completely. The diagnostic build (-DYABA_MIT_DIAGNOSE)
-   makes all YABA_* switches available at run time again. */
+/* Diagnostic checks in the hot execution path are fixed to constant false, so
+   the compiler removes them. Development counters are compiled in only with
+   YABA_INSTRUMENT (instrument.h). */
 #include <string.h>
 #include <strings.h>
 #include <malloc.h>
@@ -65,6 +64,7 @@ __attribute__((noinline)) CompileBlocks * CompileBlocks::createInstance() {
   return instance_;
 }
 DynarecSh2 * DynarecSh2::CurrentContext = NULL;
+extern "C" unsigned long long g_sync_cycles[2];   /* DynarecSh2CInterface.cpp */
 
 
 
@@ -84,10 +84,8 @@ volatile int g_zserst_adapt_an = 0;
 int ZserstModus() { return 2; }
 
 
-/* With YABA_WARTEWO=1 (diagnostic build only) the block address of the idle
-   loop is counted at the only real idle-jump return, to see what the master
-   waits on when frames stutter. The address can be looked up in the LOOPWHY
-   output, which lists the range and target per block. */
+/* Entries dropped because the CHAIN2 / NACHPRUEF tables were full (counted
+   only with YABA_INSTRUMENT). */
 unsigned int g_c2_verworfen = 0, g_np_verworfen = 0;
 
 namespace {
@@ -142,8 +140,7 @@ static unsigned chain2_anzahl = 0;
    only real idle-jump return (loopskip_cnt_ counts eight returns, including
    BIOS calls and undecoded cases); g_c2_verworfen counts cycles silently
    dropped because chain2_tab (CHAIN2_MAX entries) was full; g_np_verworfen
-   the same for nachpruef_tab. The table fill levels are available through
-   SH2DynGetTische(). The definitions stand before `namespace {`: inside the
+   the same for nachpruef_tab. The definitions stand before `namespace {`: inside the
    anonymous namespace they would get internal linkage and vdp2.cpp could not
    link to them. */
 static unsigned chain2_letzter = 0;
@@ -182,7 +179,7 @@ static void Chain2MerkenNurNeu(u32 block_b, u32 partner_b, u32 partner_e) {
     chain2_tab[chain2_anzahl].partner_e = partner_e;
     chain2_anzahl++;
   }
-  else g_c2_verworfen++;
+  else INSTR(g_c2_verworfen++);
 }
 
 /* Real cycle test instead of adjacency. Block 1 ends at one address and block
@@ -575,7 +572,7 @@ static void Chain2Merken(u32 block_b, u32 partner_b, u32 partner_e) {
     chain2_tab[chain2_anzahl].partner_e = partner_e;
     chain2_anzahl++;
   }
-  else g_c2_verworfen++;
+  else INSTR(g_c2_verworfen++);
 }
 
 /* Second chance for loops whose partner block was missing at translation
@@ -605,14 +602,7 @@ static void NachpruefVormerken(u32 kandidat_b, u32 ziel) {
     nachpruef_tab[nachpruef_anzahl].ziel       = ziel;
     nachpruef_anzahl++;
   }
-  else g_np_verworfen++;
-}
-
-/* Fill levels of the two tables for the outside. Both are file-local
-   statics, so this is a bridge instead of an extern. Called once per second. */
-extern "C" void SH2DynGetTische(unsigned int *c2, unsigned int *np) {
-  if (c2) *c2 = chain2_anzahl;
-  if (np) *np = nachpruef_anzahl;
+  else INSTR(g_np_verworfen++);
 }
 
 static void NachpruefVergessen(u32 adr) {
@@ -1211,17 +1201,10 @@ extern x86op_desc asm_list[];
 
 }
 
-/* Hot counters: the DZ(x) macro compiles the increment away under
-   YABA_NODIAG, and each counter is cache-line aligned so that master and
-   slave, running on different cores, do not share a line (false sharing).
-   The variables stay defined in every build so readers in vdp2.cpp always
-   link; without diagnostics they read 0. */
-  #define DZ(x) ((void)0)
-
-/* Per-block counter for ZYKSLAVE lock-outs. Uses a direct hash-slot index
-   instead of a search, because the lock-out can fire very often; collisions
-   reset the slot. Compiled out under YABA_NODIAG. */
-extern "C" void ZsBlockBericht(void) { }
+/* Hot counters: DZ(x) is INSTR(x) (instrument.h) and compiles away unless
+   YABA_INSTRUMENT is set; each counter is cache-line aligned so that master
+   and slave, running on different cores, do not share a line (false sharing). */
+  #define DZ(x) INSTR(x)
 
 extern "C" { alignas(64) unsigned int g_blk_eintritte = 0;
 
@@ -1229,21 +1212,12 @@ extern "C" { alignas(64) unsigned int g_blk_eintritte = 0;
    after warm-up): branch instruction, LDC SR, or MAXBLOCKSIZE reached. */
 unsigned long long g_abbr_branch = 0;   /* block ended by a branch instruction */
 unsigned long long g_abbr_ldcsr  = 0;   /* LDC SR / LDC.L SR                    */
-unsigned long long g_abbr_size   = 0;   /* MAXBLOCKSIZE erreicht                */
+unsigned long long g_abbr_size   = 0;   /* MAXBLOCKSIZE reached                 */
 }  /* closes the extern "C" block opened at g_blk_eintritte */
 /* Per-CPU split of the block entry counter. g_blk_eintritte stays the sum
    (blkm + blks == blk). */
 extern "C" { alignas(64) unsigned int g_blk_m = 0; }
 extern "C" { alignas(64) unsigned int g_blk_s = 0; }  /* own cache line per CPU */
-/* Number of BLOCK_LOOP block dispatches per CPU. Together with the idle-skip
-   count it shows whether the runtime check fails while the block is still
-   entered, or the guest has left the detected loop. */
-extern "C" { alignas(64) unsigned int g_blges_m = 0; }
-/* Per CPU: [0] re-translation of the same block id (invalidation), [1] source
-   equal to the last one, [2] equal to the one before (A/B alternation),
-   [3] new content. Printed once per second in vdp2.cpp. Diagnostic. */
-extern "C" { unsigned long long g_uebhash[2][4]; }
-extern "C" { alignas(64) unsigned int g_blges_s = 0; }  /* own cache line per CPU */
 
 /* Why does the CHAIN2 catch not apply? Master counters: g_c2zs_m (the
    ZYKSLAVE restriction blocks it), g_c2np_m (Chain2ImPartner says no),
@@ -1483,24 +1457,6 @@ void CompileBlocks::BuildInstructionList()
   }
 }
 
-
-/* Measures the time spent translating blocks (RAII timer on every return path
-   of CompileBlock), separately for master and slave. Printed once per second
-   next to the FPS line in vdp2.cpp. Diagnostic only. */
-unsigned long long g_uez_comp_ns[2] = {0, 0}, g_uez_comp_n[2] = {0, 0};
-struct UezZeitMess {
-  struct timespec t0; int s;
-  explicit UezZeitMess(int sl) : s(sl) { clock_gettime(CLOCK_MONOTONIC, &t0); }
-  ~UezZeitMess() {
-    struct timespec t1; clock_gettime(CLOCK_MONOTONIC, &t1);
-    g_uez_comp_ns[s] += (unsigned long long)((t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec));
-    g_uez_comp_n[s]++;
-  }
-};
-extern "C" void SH2DynUebersetzZeit(unsigned long long *nm, unsigned long long *ns,
-                                    unsigned long long *tm, unsigned long long *ts) {
-  *nm = g_uez_comp_n[0]; *ns = g_uez_comp_n[1]; *tm = g_uez_comp_ns[0]; *ts = g_uez_comp_ns[1];
-}
 
 Block * CompileBlocks::CompileBlock(u32 pc, addrs * ParentT = NULL, bool is_slave)
 {
@@ -1828,7 +1784,7 @@ int CompileBlocks::EmmitCode(Block *page, addrs * ParentT, bool is_slave )
     }
 #endif
     if (calsize >= MAXBLOCKSIZE) {
-      g_abbr_size++;
+      INSTR(g_abbr_size++);
       break; // no space is available
     }
 
@@ -2067,7 +2023,7 @@ int CompileBlocks::EmmitCode(Block *page, addrs * ParentT, bool is_slave )
         if (write_memory_counter == 0
             && !(WANDERFIX_stufe()
                  && (SchleifeWandert(page->b_addr, addr - 2)
-                     ? (++g_wanderfix_abgelehnt, true) : false))
+                     ? (INSTR(++g_wanderfix_abgelehnt), true) : false))
             && !(RECHENZYK_an() && RechenZykAb(page->b_addr, addr - 2, 0, 0))) {
           page->flags |= BLOCK_LOOP;
 #ifdef BUILD_INFO 
@@ -2104,7 +2060,7 @@ int CompileBlocks::EmmitCode(Block *page, addrs * ParentT, bool is_slave )
             && !(WANDERFIX_stufe()
                  && ((SchleifeWandert(page->b_addr, addr - 2)
                    || SchleifeWandert(tmp->b_addr, tmp->e_addr))
-                     ? (++g_wanderfix_abgelehnt, true) : false))
+                     ? (INSTR(++g_wanderfix_abgelehnt), true) : false))
             && !(RECHENZYK_an() && RechenZykAb(page->b_addr, addr - 2, tmp->b_addr, tmp->e_addr))) {
           page->flags |= BLOCK_LOOP;
           // Flag the two-block adjacency case. BLOCK_LOOP_ADJ is the hard
@@ -2129,7 +2085,7 @@ int CompileBlocks::EmmitCode(Block *page, addrs * ParentT, bool is_slave )
          BT/BF instead of ending the block. That would need the PageFlip
          fall-through path in dynalib_arm64.s to check the time-slice end,
          which it does not do. */
-      g_abbr_branch++;
+      INSTR(g_abbr_branch++);
       break;
     }
 
@@ -2139,7 +2095,7 @@ int CompileBlocks::EmmitCode(Block *page, addrs * ParentT, bool is_slave )
 
     if ( (op & 0xF0FF) == 0x400e || (op & 0xF0FF) == 0x4007) // sh2_LDC_SR
     {
-      g_abbr_ldcsr++;   /* unavoidable: SR changes the interrupt mask, so the block must end here */
+      INSTR(g_abbr_ldcsr++);   /* unavoidable: SR changes the interrupt mask, so the block must end here */
       break;
     }
 
@@ -2194,7 +2150,7 @@ int CompileBlocks::EmmitCode(Block *page, addrs * ParentT, bool is_slave )
             && !(WANDERFIX_stufe()
                  && ((SchleifeWandert(kand->b_addr, kand->e_addr)
                    || SchleifeWandert(page->b_addr, page->e_addr))
-                     ? (++g_wanderfix_abgelehnt, true) : false))
+                     ? (INSTR(++g_wanderfix_abgelehnt), true) : false))
             && !(RECHENZYK_an() && RechenZykAb(kand->b_addr, kand->e_addr, page->b_addr, page->e_addr))) {
           kand->flags |= BLOCK_LOOP;
           /* BLOCK_LOOP_ADJ is required: the runtime path checks exactly this
@@ -2373,6 +2329,7 @@ void DynarecSh2::ExecuteCount( u32 Count ) {
   }
 
   CurrentSH2->cycles = m_pDynaSh2->SysReg[4];
+  g_sync_cycles[is_slave_ ? 1 : 0] += m_pDynaSh2->SysReg[4];
   //if (Count == 1) {
   //  one_step_ = true;
   //  pre_exe_count_ = 0;
@@ -2602,7 +2559,6 @@ __attribute__((always_inline)) inline int DynarecSh2::Execute(){
       if ((pBlock->flags & BLOCK_LOOP_ZYK) && ZYKSLAVE_enabled() && !is_slave_
           && !(ZSERST_enabled() && zs_erste_scheibe_ == pBlock->b_addr)) {
         DZ(g_c2zs_m++);  /* blocked by the slave-only rule */
-        DZ(ZsBlockNote(pBlock->b_addr));
         if (ZSERST_enabled() && zs_erste_scheibe_ == 0) {
           zs_erste_scheibe_ = pBlock->b_addr;
         }
@@ -2618,7 +2574,7 @@ __attribute__((always_inline)) inline int DynarecSh2::Execute(){
     if (in_block) {
       /* The only real idle-loop skip. loopskip_cnt_ also counts several
          BIOS/undecoded returns, so this is the counter to use for skips. */
-      if (is_slave_) g_ls46_s++; else g_ls46_m++;
+      if (is_slave_) INSTR(g_ls46_s++); else g_ls46_m++;   /* g_ls46_m feeds the ZSERST adaptation */
       return IN_INFINITY_LOOP;
     } else {
       return 0;

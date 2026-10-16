@@ -1038,6 +1038,28 @@ static void DmaIndAnzahl(scudmainfo_struct * dma) {
   if (dma->TransferNumber == 0) dma->TransferNumber = 0x100000;
 }
 
+/* A direct SCU DMA whose source or destination lies outside the A-bus
+   (0x02000000-0x058FFFFF), the B-bus (0x05A00000-0x05FBFFFF) and work RAM high
+   (0x06000000-), or whose source and destination sit on the same bus, is not
+   executed by the hardware; it only raises the DMA-illegal interrupt
+   (see Mednafen scu.inc AddressToBus/StartDMATransfer).
+   Deep Fear starts a level 0 DMA from address 0 to 0x25C00000 during boot;
+   copying it put the BIOS reset vectors at the head of the VDP1 command list
+   (half-drawn characters, smearing). */
+static int ScuDmaBus(u32 a) {
+  a &= 0x07FFFFFF;
+  if (a >= 0x02000000 && a <= 0x058FFFFF) return 0;
+  if (a >= 0x05A00000 && a <= 0x05FBFFFF) return 1;
+  if (a >= 0x06000000) return 2;
+  return -1;
+}
+
+static int ScuDmaIllegal(const scudmainfo_struct * dmainfo) {
+  int rb = ScuDmaBus(dmainfo->ReadAddress);
+  int wb = ScuDmaBus(dmainfo->WriteAddress);
+  return rb < 0 || wb < 0 || rb == wb;
+}
+
 void ScuSetAddValue(scudmainfo_struct * dmainfo) {
   if (dmainfo->AddValue & 0x100)
     dmainfo->ReadAdd = 4;
@@ -1091,6 +1113,10 @@ void ScuSetAddValue(scudmainfo_struct * dmainfo) {
     else {
       if (dmainfo->TransferNumber == 0)
         dmainfo->TransferNumber = 0x100000;
+    }
+    if (ScuDmaIllegal(dmainfo)) {
+      dmainfo->TransferNumber = 0;
+      ScuSendDMAIllegal();
     }
   }
 

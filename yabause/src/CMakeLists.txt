@@ -54,8 +54,6 @@ set(yabause_SOURCES
 	osdcore.c
 	peripheral.c profile.c
 	frameprofile.cpp
-	yglperf.c
-	eperf.c
 	scspdsp.c scu.c sh2core.c sh2d.c sh2iasm.c sh2idle.c sh2int.c sh2trace.c smpc.c snddummy.c
 	titan/titan.c
 	vdp1.cpp vdp2.cpp vdp2debug.c vidogl.c vidshared.c vidsoft.c
@@ -361,15 +359,13 @@ if (YAB_WANT_OPENGL AND (YAB_RGB STREQUAL ""))
 		)
 		add_definitions(-DYAB_PORT_OSD)
 
-# YABA_NODIAG compiles the diagnostic gates out of the hot paths (dynarec
-# profiling and debug dumps). It is set for every build unless the build is
-# configured with -DYABA_MIT_DIAGNOSE.
-if(NOT CMAKE_C_FLAGS MATCHES "YABA_MIT_DIAGNOSE")
-  add_definitions(-DYABA_NODIAG)
-  message(STATUS "Release build: YABA_NODIAG set, diagnostic gates removed")
-else()
-  message(STATUS "Diagnostic build: YABA_NODIAG not set, diagnostics enabled")
+# Development instrumentation (instrument.h): performance counters, wall-clock timers and one
+# "INSTR:" line per second on stderr. Off for release builds.
+option(YABA_INSTRUMENT "Compile in development counters and timers" OFF)
+if(YABA_INSTRUMENT)
+  add_definitions(-DYABA_INSTRUMENT)
 endif()
+
 		
 		include(FindGLUT)
 		if (GLUT_FOUND)

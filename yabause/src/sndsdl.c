@@ -31,6 +31,7 @@ unsigned int g_snd_rat_mil = 1000;
 unsigned int g_snd_unter = 0;
 unsigned int g_snd_unter_bytes = 0;
 
+#include "instrument.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
@@ -66,8 +67,7 @@ int SNDSDLMidiOut(u8 data);
 #endif
 
 // ---------------------------------------------------------------------------
-// Decoupled sound path. Runtime switch YABA_SNDSTRETCH (env, read once in
-// SNDSDLInit(), default 1 = on):
+// Decoupled sound path (g_yaba_sndstretch, always on):
 //   on : decoupled path -- ring buffer with explicit fill-level accounting,
 //        adaptive fine-trim resampling (+-1%) against crystal/frame jitter,
 //        packet-loss concealment (last pitch period from the ring history)
@@ -79,7 +79,6 @@ int SNDSDLMidiOut(u8 data);
 //     the emulation speed.
 //   - the CDDA gap fill of the SCSP core, which depends on a different
 //     ring buffer architecture.
-//   - the YABA_SNDTRACE/YABA_WAVDUMP capture helpers.
 static int g_yaba_sndstretch = 1;
 
 static int SNDSDLInit_Legacy(void);
@@ -120,7 +119,7 @@ SNDSDLMidiOut
 
 #define NUMSOUNDBLOCKS  4
 
-// Ring parameters (used only in the YABA_SNDSTRETCH=1 path): ring about 160 ms
+// Ring parameters (used only in the decoupled path): ring about 160 ms
 // deep (safety margin), operating point / fill target at soundprefill
 // (~67 ms), fine trim clamped to +-1% (crystal/frame jitter, never audible as
 // a pitch change).
@@ -168,7 +167,7 @@ static SDL_AudioSpec audiofmt;
 static u8 soundvolume;
 static int muted = 0;
 
-// Used only in the YABA_SNDSTRETCH=1 path:
+// Used only in the decoupled path:
 static u32 soundbuffered;   // bytes written but not yet played
 static double soundratio;   // output frames per input frame
 static double soundfrac;    // fractional read position in the input block
@@ -179,7 +178,7 @@ static s32 soundlastr;
 // in SNDSDLUpdateAudio_Stretch(). Both sides run under the SDL audio lock, so
 // a plain int is sufficient.
 static int soundrebuild;
-// Diagnostics (only if YABA_SNDTRACE is set): fill level report once per second.
+// Fill level statistics (g_snd_trace, off).
 static int g_snd_trace = -1;
 static u32 soundfillmin;
 static double soundfillsum;
@@ -373,8 +372,8 @@ static void MixAudio_Stretch(UNUSED void *userdata, Uint8 *stream, int len) {
 
 			/* Free-running counters for the per-second status line: never reset,
 			   always counted, turned into per-second rates by the reader. */
-			g_snd_unter++;
-			g_snd_unter_bytes += (unsigned int)(want - done);
+			INSTR(g_snd_unter++);
+			INSTR(g_snd_unter_bytes += (unsigned int)(want - done));
 
 			// After a second underrun within the ~1 s window, flag the regulator in
 			// SNDSDLUpdateAudio_Stretch(): it may temporarily trim up to +1.5%
@@ -891,6 +890,7 @@ static void SNDSDLUpdateAudio_Stretch(u32 *leftchanbuffer, u32 *rightchanbuffer,
    /* Stretch statistics. soundratio = output frames per input frame; 1.0 = no stretching.
       g_snd_dehn counts regulation steps with more than 0.5% stretching, g_snd_rufe counts
       all steps (their ratio is the stretch rate), g_snd_rat_mil holds the current ratio x1000. */
+#ifdef YABA_INSTRUMENT
    {
       const double abw = (soundratio > 1.0) ? (soundratio - 1.0) : (1.0 - soundratio);
       g_snd_rufe++;
@@ -899,6 +899,7 @@ static void SNDSDLUpdateAudio_Stretch(u32 *leftchanbuffer, u32 *rightchanbuffer,
       if (abw > 0.005) g_snd_dehn++;
       g_snd_rat_mil = (unsigned int)(soundratio * 1000.0 + 0.5);
    }
+#endif
 
 
    SDL_UnlockAudio();

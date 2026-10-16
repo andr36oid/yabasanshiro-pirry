@@ -44,9 +44,10 @@ using namespace::std;
 
 // Fixed menu buttons for confirm/back, independent of the game keymap
 // (keymapv3.json), so a colliding or broken game keymap (e.g. a=b on the same
-// id) cannot make the menu unusable. Defaults: Confirm=Button 0, Back=Button 1.
-extern "C" int g_menu_confirm_btn = 0;
-extern "C" int g_menu_back_btn = 1;
+// id) cannot make the menu unusable. Defaults: Confirm=Button 1 (A, right),
+// Back=Button 0 (B, bottom) on the R36S pad.
+extern "C" int g_menu_confirm_btn = 1;
+extern "C" int g_menu_back_btn = 0;
 
 #include <iostream>
 #include <fstream>
@@ -685,7 +686,7 @@ void InputManager::init( const std::string & fname )
   config_fname_ = fname;
   bool km_neu = !fs::exists(fname);
   /* An existing but unusable keymapv2.json (unreadable, or no button assigned,
-     all ids -1) is moved aside (.kaputt) and regenerated. Axes do not count as
+     all ids -1) is moved aside (.broken) and regenerated. Axes do not count as
      an assignment. */
   if (!km_neu) {
     {
@@ -707,7 +708,7 @@ void InputManager::init( const std::string & fname )
         belegt = -1;
       }
       if (belegt <= 0) {
-        std::string weg = fname + ".kaputt";
+        std::string weg = fname + ".broken";
         rename(fname.c_str(), weg.c_str());
         km_neu = true;
       }

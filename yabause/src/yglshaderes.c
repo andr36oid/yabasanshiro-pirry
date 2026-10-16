@@ -96,7 +96,7 @@ static void Ygl_printProgramError(int id, GLuint prog)
     if (infoLog != NULL) {
       GLsizei length = 0;
       glGetProgramInfoLog(prog, bufSize, &length, infoLog);
-      YGLLOG("Programmlog (id=%d):\n%s\n", id, infoLog);
+      YGLLOG("Program log (id=%d):\n%s\n", id, infoLog);
       free(infoLog);
     }
   }

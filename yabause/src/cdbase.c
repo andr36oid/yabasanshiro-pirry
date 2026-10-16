@@ -1781,7 +1781,7 @@ int checkCHD(const char *filename ) {
 
 }
 
-/* See LoadCHD. Enabled by YABA_CHDPREGAP, default 0 (off). */
+/* See LoadCHD. Pregap handling for CHD images (always on). */
 static int ChdPregapOn(void)
 {
   return 1;   /* fixed on */
@@ -2034,7 +2034,7 @@ static int ISOCDReadSectorFADFromCHD(u32 FAD, void *buffer) {
     {
       if (loglba < disc.session[i].track[j].fad_end) {
         /* FAD lies in a gap of a pregap that is not stored in the image
-           (only possible with YABA_CHDPREGAP=1): return an empty sector. */
+           and is returned as an empty sector. */
         if (loglba < disc.session[i].track[j].logframeofs) {
           memset(buffer, 0, 2352);
           return 1;
