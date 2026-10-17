@@ -41,8 +41,6 @@ SOURCES_C := $(SOURCE_DIR)/osdcore.c \
 	$(SOURCE_DIR)/ygles.c \
 	$(SOURCE_DIR)/yglshaderes.c \
 	$(SOURCE_DIR)/snddummy.c \
-	$(SOURCE_DIR)/vdp1.c \
-	$(SOURCE_DIR)/vdp2.c \
 	$(SOURCE_DIR)/vidshared.c \
 	$(SOURCE_DIR)/vidsoft.c \
 	$(SOURCE_DIR)/titan/titan.c \
@@ -71,6 +69,8 @@ else
 endif
 
 SOURCES_CXX := $(SOURCE_DIR)/Counter.cpp \
+	$(SOURCE_DIR)/vdp1.cpp \
+	$(SOURCE_DIR)/vdp2.cpp \
 	$(SOURCE_DIR)/ygl_texture.cpp
 
 ifeq ($(HAVE_MUSASHI), 1)
