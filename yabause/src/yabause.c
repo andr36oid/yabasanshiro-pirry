@@ -195,9 +195,11 @@ int YabauseInit(yabauseinit_struct *init)
   q_scsp_finish = YabThreadCreateQueue(1);
   setM68kCounter(0);
 
+#if !defined(__LIBRETRO__) /* the play recorder is not built into the libretro core */
   if( init->playRecordPath && strlen(init->playRecordPath) != 0) {
     PlayRecorder_setPlayMode(init->playRecordPath,init);
   }
+#endif
 
    yabsys.frame_count = 0;
    yabsys.sync_shift = init->sync_shift;
@@ -717,7 +719,9 @@ int YabauseEmulate(void) {
    int oneframeexec = 0;
    EPerfFrameBegin();
    yabsys.frame_count++;
+#if !defined(__LIBRETRO__)
    PlayRecorder_proc(yabsys.frame_count);
+#endif
 
    const u32 cyclesinc =
       yabsys.DecilineMode ? yabsys.DecilineStop : yabsys.DecilineStop * 10;

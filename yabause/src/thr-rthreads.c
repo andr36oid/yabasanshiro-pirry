@@ -172,6 +172,7 @@ int YabClearEventQueue(YabEventQueue * queue_t)
 		queue->out %= queue->capacity;
 	}
 	slock_unlock(queue->mutex);
+	return 0;
 }
 
 void YabThreadUSleep( unsigned int stime )
@@ -285,3 +286,16 @@ YabMutex * YabThreadCreateMutex()
 }
 
 //////////////////////////////////////////////////////////////////////////////
+
+/* Same as in thr-linux.cpp: 2 = emulation threads are not pinned to a core. */
+int YabaKernModus(void)
+{
+   return 2;
+}
+
+/* Same contract as thr-linux.cpp: despite the name, the argument is in microseconds. */
+int YabNanosleep(u64 us)
+{
+   YabThreadUSleep((unsigned int)us);
+   return 0;
+}

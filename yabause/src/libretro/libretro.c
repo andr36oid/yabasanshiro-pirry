@@ -51,6 +51,8 @@ static int current_height;
 
 static bool renderer_running = false;
 static bool hle_bios_force = false;
+/* Read by vdp2.cpp: set while the HLE BIOS is used instead of a real one. */
+int g_emulated_bios = 0;
 static bool one_frame_rendered = false;
 
 static bool libretro_supports_bitmasks = false;
@@ -564,7 +566,7 @@ void retro_set_resolution()
    }
    current_width = game_width * resolution_mode;
    current_height = game_height * resolution_mode;
-   VIDCore->Resize(0, 0, current_width, current_height, 0);
+   VIDCore->Resize(0, 0, current_width, current_height, 0, FULL);
    retro_reinit_av_info();
    VIDCore->SetSettingValue(VDP_SETTING_RESOLUTION_MODE, g_resolution_mode);
 }
@@ -1253,6 +1255,7 @@ bool retro_load_game(const struct retro_game_info *info)
    yinit.cdcoretype       = CDCORE_ISO;
    yinit.cdpath           = full_path;
    yinit.biospath         = (hle_bios_force ? NULL : bios_path);
+   g_emulated_bios        = hle_bios_force ? 1 : 0;
    yinit.carttype         = addon_cart_type;
    yinit.cartpath         = "\0";
 
