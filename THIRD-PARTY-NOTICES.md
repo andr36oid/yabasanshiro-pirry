@@ -26,3 +26,16 @@ following components. Their license texts are in the source tree at the paths gi
 | SDL2 | input, window (shared system library) | zlib | system library |
 | Boost | filesystem, locale (shared system library) | BSL-1.0 | system library |
 | libcurl | HTTPS for RetroAchievements, loaded at run time if installed | curl license | system library |
+
+The libretro core (`yabause/src/libretro`, built for Android by andr36oid) does not use
+the menu, RetroAchievements, SDL2, Boost, libcurl or libpng. Instead of the fetched
+libchdr and zlib it builds the copy in `yabause/src/libchdr` (taken from the
+libretro/yabause `yabasanshiro` branch), and it contains parts of libretro-common:
+
+| Component | License | Path |
+|---|---|---|
+| libchdr (Romain Tisserand) | BSD-3-Clause | `yabause/src/libchdr/LICENSE.txt` |
+| FLAC decoder (Xiph.Org) | BSD-3-Clause | `yabause/src/libchdr/deps/flac-1.3.3/COPYING.Xiph` |
+| LZMA SDK (Igor Pavlov) | public domain | `yabause/src/libchdr/deps/lzma-19.00/LICENSE` |
+| zlib (Jean-loup Gailly, Mark Adler) | zlib | `yabause/src/libchdr/deps/zlib-1.2.11/README` |
+| libretro-common | MIT | license in the file headers, `yabause/src/libretro/libretro-common` |
