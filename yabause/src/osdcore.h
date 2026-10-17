@@ -89,6 +89,7 @@ typedef struct {
 } OSD_struct;
 
 int OSDInit(int coreid);
+void OSDDeInit(void);
 int OSDChangeCore(int coreid);
 
 void OSDPushMessage(int msgtype, int ttl, const char * message, ...);

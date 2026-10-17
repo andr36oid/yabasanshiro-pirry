@@ -6354,10 +6354,10 @@ void ScspExec(){
   if (thread_running == 0){
     thread_running = 1;
     if (g_scsp_main_mode == 0) {
-      YabThreadStart(YAB_THREAD_SCSP, ScspAsynMainCpuTime, NULL);
+      YabThreadStart(YAB_THREAD_SCSP, (void * (*)(void *))ScspAsynMainCpuTime, NULL);
     }
     else {
-      YabThreadStart(YAB_THREAD_SCSP, ScspAsynMainRealtime, NULL);
+      YabThreadStart(YAB_THREAD_SCSP, (void * (*)(void *))ScspAsynMainRealtime, NULL);
     }
     YabThreadUSleep(100000);
   }

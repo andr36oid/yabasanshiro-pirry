@@ -46,6 +46,12 @@ int YuiUseOGLOnThisThread();
 /* Bfore rendering in a thread, it needs to revoke current rendering thread */
 int YuiRevokeOGLOnThisThread();
 
+#ifdef __LIBRETRO__
+/* Defined in libretro/libretro.c */
+int YuiGetFB(void);
+void YuiMsg(const char *format, ...);
+#endif
+
 
 //////////////////////////////////////////////////////////////////////////////
 // Helper functions(you can use these in your own port)
