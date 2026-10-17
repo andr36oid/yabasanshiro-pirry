@@ -31,6 +31,23 @@ typedef void (GL_APIENTRYP RGLSYMGLBINDIMAGETEXTUREPROC) (GLuint unit, GLuint te
 #define GL_SHADER_STORAGE_BUFFER           0x90D2
 #define GL_WRITE_ONLY                      0x88B9
 #define GL_SHADER_IMAGE_ACCESS_BARRIER_BIT 0x00000020
+/* GLES 3.1 names used by the compute shader path in ygl_texture.cpp; the
+   glsym ES3 header only covers GLES 3.0. */
+#ifndef GL_PIXEL_BUFFER_BARRIER_BIT
+#define GL_PIXEL_BUFFER_BARRIER_BIT        0x00000080
+#endif
+#ifndef GL_BUFFER_UPDATE_BARRIER_BIT
+#define GL_BUFFER_UPDATE_BARRIER_BIT       0x00000200
+#endif
+#ifndef GL_SHADER_STORAGE_BARRIER_BIT
+#define GL_SHADER_STORAGE_BARRIER_BIT      0x00002000
+#endif
+#ifndef GL_ALL_BARRIER_BITS
+#define GL_ALL_BARRIER_BITS                0xFFFFFFFF
+#endif
+#ifndef GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS
+#define GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS 0x90EB
+#endif
 
 extern RGLSYMGLMEMORYBARRIERPROC __rglgen_glMemoryBarrier;
 extern RGLSYMGLBINDFRAGDATALOCATIONPROC __rglgen_glBindFragDataLocation;
