@@ -557,7 +557,7 @@ typedef struct {
    u32 specialcolormode;
 } YglProgram;
 
-/* Each level sits on its own 64-byte cache line (allocated with aligned_alloc(64))
+/* Each level sits on its own 64-byte cache line (allocated with posix_memalign(64))
    to avoid false sharing between neighbouring levels. */
 typedef struct __attribute__((aligned(64))) {
    int prgcount;

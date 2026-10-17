@@ -1753,9 +1753,12 @@ int YglInit(int width, int height, unsigned int depth)
   _Ygl->CpuWriteFrameBuffer = (u32 *)malloc(_Ygl->rwidth * _Ygl->rheight * 4);
   memset(_Ygl->CpuWriteFrameBuffer, 0xFF, _Ygl->rwidth * _Ygl->rheight * 4);
 
-  if ((_Ygl->levels = (YglLevel *)aligned_alloc(64, sizeof(YglLevel) * (depth + 1))) == NULL)
+  /* posix_memalign instead of aligned_alloc: Android has aligned_alloc only from API 28 */
   {
-    return -1;
+    void *lv = NULL;
+    if (posix_memalign(&lv, 64, sizeof(YglLevel) * (depth + 1)) != 0)
+      return -1;
+    _Ygl->levels = (YglLevel *)lv;
   }
 
   memset(_Ygl->levels, 0, sizeof(YglLevel) * (depth + 1));
