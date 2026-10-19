@@ -58,7 +58,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "threads.h"
 #include "yui.h"
 #include "frameprofile.h"
-#include "eperf.h"
 #include <unistd.h>
 /* The render thread reads the line registers through this pointer (live or from the snapshot), see vdp2.cpp. */
 extern Vdp2 * Vdp2LinesRender;
@@ -96,7 +95,6 @@ static inline int PerLineIdentAn(void) {
   }
   return v;
 }
-unsigned int g_perlineident_um = 0;   /* number of redirected layers */
 
 /* Returns 1 if the line table is an identity ramp and stores the constant offset in *h0/*v0. */
 /* `hoehe` is passed in instead of reading vdp2height, which is declared after this function. */
@@ -3733,8 +3731,6 @@ int InterHalbAktiv(void) { return InterHalbAn(); }   /* used by ygles.c */
 
 static void Vdp2DrawMapPerLine(vdp2draw_struct *info, YglTexture *texture) {
   NBGWEG(info, 2);
-  EPERF_TPERF_LAY(6);
-  EPERF_TPERF_ADD(perline_zeilen, vdp2height);
   const int plw_ = PlWortAn();
 
   int lineindex = 0;
@@ -3897,7 +3893,6 @@ static void Vdp2DrawMapPerLine(vdp2draw_struct *info, YglTexture *texture) {
 
 void Vdp2DrawMapPerLineNbg23(vdp2draw_struct *info, YglTexture *texture, int id, int xoffset ) {
   NBGWEG(info, 8);
-  EPERF_TPERF_ADD(perline_zeilen, vdp2height);
   const int plw_ = PlWortAn();
   const int plv_ = plw_ && PlSchnellModus() == 2;   /* comparison per run */
 
@@ -4387,8 +4382,6 @@ void Vdp2DrawRotationThread(void * p) {
 #if RBG_PROFILE
     before = YabauseGetTicks() * 1000000 / yabsys.tickfreq;
 #endif
-    EPERF_TPERF_LAY(4);
-    EPERF_TPERF_ADD(rot_zeilen, vdp2height);
     Vdp2DrawRotation_in(curret_rbg);
 #if RBG_PROFILE    
     now = YabauseGetTicks() * 1000000 / yabsys.tickfreq;
@@ -4792,9 +4785,7 @@ static void Vdp2DrawRotation_in(RBGDrawInfo * rbg) {
   paraB.over_pattern_name = fixVdp2Regs->OVPNRB;
 
   if (_Ygl->rbg_use_compute_shader) {
-	  EPERF_XT_BEGIN(_eperf_rbgline_compute_t0);
 	  RBGGenerator_update(rbg);
-	  EPERF_XT_END(_eperf_rbgline_compute_t0, rbgline_ms);
 	  
 	  if (info->LineColorBase != 0) {
 		  const float vstep = 1.0 / rbg->rotate_mval_v;
@@ -4828,7 +4819,6 @@ static void Vdp2DrawRotation_in(RBGDrawInfo * rbg) {
   const float hstep = 1.0 / rbg->rotate_mval_h;
   //for (j = 0; j < vres; j += vstep)
   j = 0.0f;
-  EPERF_XT_BEGIN(_eperf_rbgline_t0);
   for (int jj = 0; jj< rbg->vres; jj++)
   {
 #if 0 // PERLINE
@@ -5196,7 +5186,6 @@ static void Vdp2DrawRotation_in(RBGDrawInfo * rbg) {
     texture->textdata += texture->w;
     j += vstep;
   }
-  EPERF_XT_END(_eperf_rbgline_t0, rbgline_ms);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -5238,7 +5227,9 @@ static void SetSaturnResolution(int width, int height)
 
         if (_Ygl->rotate_screen) {
           if (_Ygl->isFullScreen) {
-            if (GlHeight > GlWidth) {
+            /* Rotated: landscape panels keep the old test; square and portrait
+               panels compare the aspect ratio so the picture fits the screen. */
+            if ((GlWidth > GlHeight) ? (GlHeight > GlWidth) : ((GlHeight * hrate) > GlWidth)) {
               _Ygl->originy = (GlHeight - GlWidth  * wrate);
               GlHeight = _Ygl->screen_width * wrate;
             }
@@ -5254,9 +5245,18 @@ static void SetSaturnResolution(int width, int height)
         }
         else {
           if (_Ygl->isFullScreen) {
-            if (GlHeight > GlWidth) {
-              _Ygl->originy = (GlHeight - GlWidth  * hrate);
-              GlHeight = _Ygl->screen_width * hrate;
+            /* Landscape panels keep the old fit: users with a 4:3 panel rely on it
+               (16:9 there fills the screen). Only square and portrait panels, where
+               the old test picked the wrong branch and overflowed, compare the
+               aspect ratio: square panels are centered, portrait ones keep the
+               picture at the top as before. */
+            if ((GlWidth > GlHeight) ? (GlHeight > GlWidth) : ((GlHeight * wrate) > GlWidth)) {
+              if (GlWidth >= GlHeight) {
+                _Ygl->originy = (GlHeight - GlWidth  * hrate) / 2.0f;
+              } else {
+                _Ygl->originy = (GlHeight - GlWidth  * hrate);
+              }
+              GlHeight = GlWidth * hrate;
             }
             else {
               _Ygl->originx = (GlWidth - GlHeight * wrate) / 2.0f;
@@ -7988,7 +7988,6 @@ static void Vdp2DrawNBG0(void)
       int pli_h0 = 0, pli_v0 = 0;
       int pli_um = (PerLineIdentAn() && info.islinescroll
                     && PerLineIstIdentitaet(&info, vdp2height, &pli_h0, &pli_v0));
-      if (pli_um) g_perlineident_um++;
       if (info.islinescroll && !pli_um) {
         info.sh = (fixVdp2Regs->SCXIN0 & 0x7FF);
         info.sv = (fixVdp2Regs->SCYIN0 & 0x7FF);
@@ -8311,7 +8310,6 @@ static void Vdp2DrawNBG1(void)
     int pli_h0 = 0, pli_v0 = 0;
     int pli_um = (PerLineIdentAn() && info.islinescroll
                   && PerLineIstIdentitaet(&info, vdp2height, &pli_h0, &pli_v0));
-    if (pli_um) g_perlineident_um++;
     if (info.islinescroll && !pli_um) {
       info.sh = (fixVdp2Regs->SCXIN1 & 0x7FF);
       info.sv = (fixVdp2Regs->SCYIN1 & 0x7FF);

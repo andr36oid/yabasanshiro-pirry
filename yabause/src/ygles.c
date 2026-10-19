@@ -25,7 +25,6 @@
 extern u16 Vdp2TvmdFuerRender(void);   /* vdp2.cpp */
 #include "debug.h"
 #include "frameprofile.h"
-#include "yglperf.h"
 /* The render thread reads the line registers through this pointer: live or from the snapshot (see vdp2.cpp). */
 extern Vdp2 * Vdp2LinesRender;
 
@@ -728,9 +727,6 @@ void YglTmPull(YglTextureManager *tm, u32 flg)
     glBindTexture(GL_TEXTURE_2D, tm->textureID_in[tm->current]);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, tm->pixelBufferID_in[tm->current]);
 
-    YGLPERF_INC(map_n);
-    if (flg) YGLPERF_INC(mapni_n);
-    YGLPERF_BEGIN(map);
     {
       GLbitfield mf;
       /* Mapping the whole atlas is costly; INVALIDATE must not be used on the
@@ -743,8 +739,6 @@ void YglTmPull(YglTextureManager *tm, u32 flg)
       tm->texture_in[tm->current] = (int *)glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0,
                                         tm->width * tm->height * 4, mf);
     }
-    YGLPERF_END(map, map_ms);
-    if (flg) YGLPERF_END(map, mapni_ms);
     if (tm->texture_in[tm->current] == NULL)
     {
       abort();
@@ -1015,7 +1009,18 @@ void VIDOGLVdp1WriteFrameBuffer(u32 type, u32 addr, u32 val)
     switch (type)
     {
     case 0:
-      LOG("VIDOGLVdp1WriteFrameBuffer: Unimplement CPU write framebuffer %d\n", type);
+      // Byte write: the byte is already in the RAM copy, so take the whole 16-bit word from there.
+      {
+        u16 w_ = T1ReadWord(Vdp1FrameBuffer[_Ygl->drawframe], addr & ~1u);
+        if (w_ & 0x8000) {
+          _Ygl->CpuWriteFrameBuffer[texaddr] = VDP1COLOR(0, 0, 0, 0, VDP1COLOR16TO24(w_));
+        } else {
+          u32 v_ = w_;
+          spritepixelinfo_struct spi = {0};
+          Vdp1GetSpritePixelInfo(Vdp2Regs->SPCTL & 0x0F, &v_, &spi);
+          _Ygl->CpuWriteFrameBuffer[texaddr] = VDP1COLOR(1, spi.colorcalc, spi.priority, 0, v_);
+        }
+      }
       break;
     case 1:
       if (val & 0x8000)
@@ -1072,7 +1077,8 @@ void VIDOGLVdp1WriteFrameBuffer(u32 type, u32 addr, u32 val)
     switch (type)
     {
     case 0:
-      LOG("VIDOGLVdp1WriteFrameBuffer: Unimplement CPU write framebuffer %d\n", type);
+      // Byte write, 8-bit 1024 wide: a word covers texaddr and texaddr+1.
+      _Ygl->CpuWriteFrameBuffer[texaddr + (addr & 1)] = VDP1COLOR(1, 0, 0, 0, val & 0xFF);
       break;
     case 1:
       _Ygl->CpuWriteFrameBuffer[texaddr] = VDP1COLOR(1, 0, 0, 0, (val >> 8) & 0xFF);
@@ -1097,7 +1103,8 @@ void VIDOGLVdp1WriteFrameBuffer(u32 type, u32 addr, u32 val)
     switch (type)
     {
     case 0:
-      LOG("VIDOGLVdp1WriteFrameBuffer: Unimplement CPU write framebuffer %d\n", type);
+      // Byte write, 8-bit 512 wide: one byte is one pixel.
+      _Ygl->CpuWriteFrameBuffer[texaddr] = VDP1COLOR(1, 0, 0, 0, val & 0xFF);
       break;
     case 1:
       _Ygl->CpuWriteFrameBuffer[texaddr] = VDP1COLOR(1, 0, 0, 0, (val >> 8) & 0xFF);
@@ -2116,7 +2123,7 @@ static int YglGetOptimalTessCount(const float * vertices) {
   if (tessCount < 1) tessCount = 1;
   return tessCount;
 }
-/* ───────────────────────────────────────────────────────────────────────── */
+/* ------------------------------------------------------------------------- */
 
 static int YglQuadGrowShading_tesselation_in(YglSprite *input, YglTexture *output, float *colors, YglCache *c, int cash_flg);
 
@@ -3673,7 +3680,6 @@ void YglEraseWriteVDP1(void)
   if (_Ygl->vdp1FrameBuff[0] == 0)
     return;
 
-  YGLPERF_BEGIN(erase);
 
   /* Bind the static FBO for the readframe slot instead of reattaching attachments. */
   glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->vdp1fbo2[_Ygl->readframe]);
@@ -3789,7 +3795,6 @@ void YglEraseWriteVDP1(void)
   }
 
   glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->default_fbo);
-  YGLPERF_END(erase, erase_ms);
 }
 
 u32 Vdp2ColorRamGetColor(u32 colorindex, int alpha);
@@ -3819,7 +3824,6 @@ void YglRenderVDP1(void)
   // YglUseProgramCached(); a stale cache would skip a required glUseProgram call.
   YglInvalidateProgramCache();
   FrameProfileAdd("YglRenderVDP1 start");
-  YGLPERF_BEGIN(vdp1);
   YabThreadLock(_Ygl->mutex);
   _Ygl->vdp1_hasMesh = 0;
 
@@ -3851,7 +3855,6 @@ void YglRenderVDP1(void)
   level = &(_Ygl->levels[_Ygl->depth]);
   if (level == NULL)
   {
-    YGLPERF_END(vdp1, vdp1_ms);
     return;
   }
   cprg = -1;
@@ -3913,12 +3916,10 @@ void YglRenderVDP1(void)
           glPatchParameteri(GL_PATCH_VERTICES, 4);
 #endif
         glDrawArrays(GL_PATCHES, 0, level->prg[j].currentQuad / 2);
-        YGLPERF_INC(dc);
       }
       else
       {
         glDrawArrays(GL_TRIANGLES, 0, level->prg[j].currentQuad / 2);
-        YGLPERF_INC(dc);
       }
       level->prg[j].currentQuad = 0;
       _Ygl->cpu_framebuffer_write[_Ygl->drawframe] = 0;
@@ -3944,7 +3945,6 @@ void YglRenderVDP1(void)
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_BLEND);
   glFlush();
-  YGLPERF_END(vdp1, vdp1_ms);
   FrameProfileAdd("YglRenderVDP1 end");
 }
 
@@ -4639,7 +4639,6 @@ void YglRender(void)
   YglInvalidateProgramCache();
   FrameProfileAdd("YglRender start");
 
-  YGLPERF_BEGIN(comp);
   if ((Vdp2TvmdFuerRender() & 0x8000) == 0)
   {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -4776,10 +4775,7 @@ void YglRender(void)
 
         if (Vdp1External.disptoggle & 0x01)
         {
-          YGLPERF_INC(fb_n);
-          YGLPERF_BEGIN(fb);
           YglRenderFrameBuffer(from, to);
-          YGLPERF_END(fb, fb_ms);
         }
         from = to;
 
@@ -4874,7 +4870,6 @@ void YglRender(void)
             glVertexAttribPointer(level->prg[j].vaid, 4, GL_FLOAT, GL_FALSE, 0, level->prg[j].vertexAttribute);
           }
           glDrawArrays(GL_TRIANGLES, 0, level->prg[j].currentQuad / 2);
-          YGLPERF_INC(dc);
 
           if (level->prg[j].bwin0 != 0 || level->prg[j].bwin1 != 0 || level->prg[j].bwinsp != 0 || (level->prg[j].blendmode != VDP2_CC_NONE && ccwindow))
           {
@@ -4898,16 +4893,12 @@ void YglRender(void)
     glBlendFunc(blendfunc_src, blendfunc_dst);
     if (Vdp1External.disptoggle & 0x01)
     {
-      YGLPERF_INC(fb_n);
-      YGLPERF_BEGIN(fb);
       YglRenderFrameBuffer(from, 8);
-      YGLPERF_END(fb, fb_ms);
     }
   }
 
   if ((fixVdp2Regs->SDCTL & 0xFF) != 0 || _Ygl->msb_shadow_count_[_Ygl->readframe] != 0)
   {
-    YGLPERF_INC(shadow_n);
     YglRenderFrameBufferShadow();
   }
 
@@ -4970,17 +4961,13 @@ render_finish:
   /* RetroAchievements message, drawn every frame independent of the FPS OSD
      (defined only in the retro_arena build) */
   if (OSDNanovgDrawRAOverlay) OSDNanovgDrawRAOverlay();
-  YGLPERF_END(comp, comp_ms);
 
   /* GPU backlog measurement that does not change the flow: set a fence at the end of the
      frame and only poll it (timeout 0) in the following frames; if it is still unsignaled,
      the GPU lags at least one field behind. Never waits or flushes here, since any extra
      synchronization point would distort the result. Off by default. */
 
-  YGLPERF_BEGIN(swapz);
   YuiSwapBuffers();
-  YGLPERF_END(swapz, swap_ms);
-  YglPerfFieldTick();
   FrameProfileAdd("YglRender end");
   return;
 }
@@ -5208,10 +5195,7 @@ void YglRenderDestinationAlpha(void)
       }
       if (Vdp1External.disptoggle & 0x01)
       {
-        YGLPERF_INC(fb_n);
-        YGLPERF_BEGIN(fb);
         YglRenderFrameBuffer(from, to);
-        YGLPERF_END(fb, fb_ms);
       }
       from = to;
 
@@ -5353,10 +5337,7 @@ void YglRenderDestinationAlpha(void)
     }
     if (Vdp1External.disptoggle & 0x01)
     {
-      YGLPERF_INC(fb_n);
-      YGLPERF_BEGIN(fb);
       YglRenderFrameBuffer(i, i + 1);
-      YGLPERF_END(fb, fb_ms);
     }
   }
 

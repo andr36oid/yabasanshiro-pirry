@@ -31,6 +31,7 @@ const GLchar Yglprg_fxaa_f_option_nv[] =
 const GLchar Yglprg_fxaa_f_option_others[] =
 #if defined (_OGLES3_)
 "#version 310 es \n"
+"precision mediump float; \n"
 #else
 "#version 330 \n"
 #endif

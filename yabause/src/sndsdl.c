@@ -67,25 +67,16 @@ int SNDSDLMidiOut(u8 data);
 #endif
 
 // ---------------------------------------------------------------------------
-// Decoupled sound path (g_yaba_sndstretch, always on):
-//   on : decoupled path -- ring buffer with explicit fill-level accounting,
+// Decoupled sound path: ring buffer with explicit fill-level accounting,
 //        adaptive fine-trim resampling (+-1%) against crystal/frame jitter,
 //        packet-loss concealment (last pitch period from the ring history)
 //        instead of a hard cut on a real underrun. Tempo and pitch stay
 //        stable when emulation speed drops.
-//   off: original path of this file (fixed 1:1 byte counter, no correction).
 // Deliberately not included:
 //   - deficit time stretching / grain WSOLA, which ties tempo and pitch to
 //     the emulation speed.
 //   - the CDDA gap fill of the SCSP core, which depends on a different
 //     ring buffer architecture.
-static int g_yaba_sndstretch = 1;
-
-static int SNDSDLInit_Legacy(void);
-static void SNDSDLDeInit_Legacy(void);
-static int SNDSDLChangeVideoFormat_Legacy(int vertfreq);
-static void SNDSDLUpdateAudio_Legacy(u32 *leftchanbuffer, u32 *rightchanbuffer, u32 num_samples);
-static u32 SNDSDLGetAudioSpace_Legacy(void);
 
 static int SNDSDLInit_Stretch(void);
 static void SNDSDLDeInit_Stretch(void);
@@ -117,7 +108,6 @@ SNDSDLMidiOut
 #endif
 };
 
-#define NUMSOUNDBLOCKS  4
 
 // Ring parameters (used only in the decoupled path): ring about 160 ms
 // deep (safety margin), operating point / fill target at soundprefill
@@ -178,11 +168,6 @@ static s32 soundlastr;
 // in SNDSDLUpdateAudio_Stretch(). Both sides run under the SDL audio lock, so
 // a plain int is sufficient.
 static int soundrebuild;
-// Fill level statistics (g_snd_trace, off).
-static int g_snd_trace = -1;
-static u32 soundfillmin;
-static double soundfillsum;
-static long soundfillcnt;
 // Touched only by the SDL audio callback thread.
 // plc_run: consecutive underrun callbacks. Repeated PLC on the same material
 //   turns into a static hum (same period every time), so from the 5th in a
@@ -192,20 +177,6 @@ static int plc_run = 0;
 static int plc_lastP = 0;
 
 //////////////////////////////////////////////////////////////////////////////
-
-static void MixAudio(UNUSED void *userdata, Uint8 *stream, int len) {
-	int i;
-	Uint8* soundbuf = (Uint8*)stereodata16;
-
-	// original code
-	for (i = 0; i < len; i++)
-	{
-		if (soundpos >= soundbufsize)
-			soundpos = 0;
-		stream[i] = muted ? audiofmt.silence : soundbuf[soundpos];
-		soundpos++;
-	}
-}
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -360,7 +331,6 @@ static void MixAudio_Stretch(UNUSED void *userdata, Uint8 *stream, int len) {
 		// callback thread, so plain statics are sufficient.
 		{
 			static long underrun_count = 0;
-			static long underrun_bytes = 0;
 			static struct timespec last_report;
 			static int last_report_init = 0;
 			static int reprimed_this_window = 0;
@@ -368,7 +338,6 @@ static void MixAudio_Stretch(UNUSED void *userdata, Uint8 *stream, int len) {
 			double elapsed;
 
 			underrun_count++;
-			underrun_bytes += (long)(want - done);
 
 			/* Free-running counters for the per-second status line: never reset,
 			   always counted, turned into per-second rates by the reader. */
@@ -393,7 +362,6 @@ static void MixAudio_Stretch(UNUSED void *userdata, Uint8 *stream, int len) {
 			        + (double)(now.tv_nsec - last_report.tv_nsec) / 1e9;
 			if (elapsed >= 1.0) {
 				underrun_count = 0;
-				underrun_bytes = 0;
 				reprimed_this_window = 0;
 				last_report = now;
 			}
@@ -405,55 +373,7 @@ static void MixAudio_Stretch(UNUSED void *userdata, Uint8 *stream, int len) {
 
 static int SNDSDLInit(void)
 {
-   return g_yaba_sndstretch ? SNDSDLInit_Stretch() : SNDSDLInit_Legacy();
-}
-
-static int SNDSDLInit_Legacy(void)
-{
-   //samples should be a power of 2 according to SDL-doc
-   //so normalize it to the nearest power of 2 here
-   u32 normSamples = 512;
-
-#if defined (_MSC_VER) && SDL_VERSION_ATLEAST(2,0,0)
-   SDL_SetMainReady();
-#endif
-   SDL_InitSubSystem(SDL_INIT_AUDIO);
-//   if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0);
-//      return -1;
-
-   audiofmt.freq = 44100;
-   audiofmt.format = AUDIO_S16SYS;
-   audiofmt.channels = 2;
-   audiofmt.samples = (audiofmt.freq / 60) * 2;
-   audiofmt.callback = MixAudio;
-   audiofmt.userdata = NULL;
-
-   while (normSamples < audiofmt.samples)
-      normSamples <<= 1;
-
-   audiofmt.samples = normSamples;
-
-   soundlen = audiofmt.freq / 60; // 60 for NTSC or 50 for PAL. Initially assume it's going to be NTSC.
-   soundbufsize = soundlen * NUMSOUNDBLOCKS * 2 * 2;
-
-   soundvolume = SDL_MIX_MAXVOLUME;
-
-   if (SDL_OpenAudio(&audiofmt, NULL) != 0)
-   {
-      YabSetError(YAB_ERR_SDL, (void *)SDL_GetError());
-      return -1;
-   }
-
-   if ((stereodata16 = (u16 *)malloc(soundbufsize)) == NULL)
-      return -1;
-
-   memset(stereodata16, 0, soundbufsize);
-
-   soundpos = 0;
-
-   SDL_PauseAudio(0);
-
-   return 0;
+   return SNDSDLInit_Stretch();
 }
 
 // Pre-size the ring for the slowest video format (50 Hz) and never resize it,
@@ -518,18 +438,7 @@ static int SNDSDLInit_Stretch(void)
 
 static void SNDSDLDeInit(void)
 {
-   if (g_yaba_sndstretch)
-      SNDSDLDeInit_Stretch();
-   else
-      SNDSDLDeInit_Legacy();
-}
-
-static void SNDSDLDeInit_Legacy(void)
-{
-   SDL_CloseAudio();
-
-   if (stereodata16)
-      free(stereodata16);
+   SNDSDLDeInit_Stretch();
 }
 
 static void SNDSDLDeInit_Stretch(void)
@@ -557,24 +466,7 @@ static int SNDSDLReset(void)
 
 static int SNDSDLChangeVideoFormat(int vertfreq)
 {
-   return g_yaba_sndstretch ? SNDSDLChangeVideoFormat_Stretch(vertfreq)
-                             : SNDSDLChangeVideoFormat_Legacy(vertfreq);
-}
-
-static int SNDSDLChangeVideoFormat_Legacy(int vertfreq)
-{
-   soundlen = audiofmt.freq / vertfreq;
-   soundbufsize = soundlen * NUMSOUNDBLOCKS * 2 * 2;
-
-   if (stereodata16)
-      free(stereodata16);
-
-   if ((stereodata16 = (u16 *)malloc(soundbufsize)) == NULL)
-      return -1;
-
-   memset(stereodata16, 0, soundbufsize);
-
-   return 0;
+   return SNDSDLChangeVideoFormat_Stretch(vertfreq);
 }
 
 static int SNDSDLChangeVideoFormat_Stretch(UNUSED int vertfreq)
@@ -639,9 +531,6 @@ static int LadetonAuffuellenGesperrt(unsigned int *fuell_vorher, unsigned int *a
    soundrebuild = 0;
    plc_run = 0;
    plc_lastP = 0;
-   soundfillmin = 0xFFFFFFFFu;
-   soundfillsum = 0.0;
-   soundfillcnt = 0;
    return 1;
 }
 
@@ -653,7 +542,7 @@ static int SNDSDLLadetonPause(int was, unsigned int *fuell, unsigned int *aufgef
 {
    int r = 0;
    *fuell = 0; *aufgefuellt = 0; *ziel = 0;
-   if (!g_yaba_sndstretch || stereodata16 == NULL)
+   if (stereodata16 == NULL)
       return 0;
    if (was == 1)
    {
@@ -699,40 +588,7 @@ static void sdlConvert32uto16s(s32 *srcL, s32 *srcR, s16 *dst, u32 len) {
 
 static void SNDSDLUpdateAudio(u32 *leftchanbuffer, u32 *rightchanbuffer, u32 num_samples)
 {
-   if (g_yaba_sndstretch)
-      SNDSDLUpdateAudio_Stretch(leftchanbuffer, rightchanbuffer, num_samples);
-   else
-      SNDSDLUpdateAudio_Legacy(leftchanbuffer, rightchanbuffer, num_samples);
-}
-
-static void SNDSDLUpdateAudio_Legacy(u32 *leftchanbuffer, u32 *rightchanbuffer, u32 num_samples)
-{
-   u32 copy1size=0, copy2size=0;
-   SDL_LockAudio();
-
-   if ((soundbufsize - soundoffset) < (num_samples * sizeof(s16) * 2))
-   {
-      copy1size = (soundbufsize - soundoffset);
-      copy2size = (num_samples * sizeof(s16) * 2) - copy1size;
-   }
-   else
-   {
-      copy1size = (num_samples * sizeof(s16) * 2);
-      copy2size = 0;
-   }
-
-   sdlConvert32uto16s((s32 *)leftchanbuffer, (s32 *)rightchanbuffer,
-   (s16 *)(((u8 *)stereodata16)+soundoffset), copy1size / sizeof(s16) / 2);
-
-   if (copy2size)
-      sdlConvert32uto16s((s32 *)leftchanbuffer + (copy1size / sizeof(s16) / 2),
-      (s32 *)rightchanbuffer + (copy1size / sizeof(s16) / 2), (s16 *)stereodata16,
-       copy2size / sizeof(s16) / 2);
-
-   soundoffset += copy1size + copy2size;
-   soundoffset %= soundbufsize;
-
-   SDL_UnlockAudio();
+   SNDSDLUpdateAudio_Stretch(leftchanbuffer, rightchanbuffer, num_samples);
 }
 
 // Rewinds the ring to the primed state. The buffer is kept zeroed, so the
@@ -751,9 +607,6 @@ static void ResetStream(void)
    soundrebuild = 0;
    plc_run = 0;
    plc_lastP = 0;
-   soundfillmin = 0xFFFFFFFFu;
-   soundfillsum = 0.0;
-   soundfillcnt = 0;
 }
 
 // Writes one output frame, already scaled and clipped, at the write pointer.
@@ -909,19 +762,7 @@ static void SNDSDLUpdateAudio_Stretch(u32 *leftchanbuffer, u32 *rightchanbuffer,
 
 static u32 SNDSDLGetAudioSpace(void)
 {
-   return g_yaba_sndstretch ? SNDSDLGetAudioSpace_Stretch() : SNDSDLGetAudioSpace_Legacy();
-}
-
-static u32 SNDSDLGetAudioSpace_Legacy(void)
-{
-   u32 freespace=0;
-
-   if (soundoffset > soundpos)
-      freespace = soundbufsize - soundoffset + soundpos;
-   else
-      freespace = soundpos - soundoffset;
-
-   return (freespace / sizeof(s16) / 2);
+   return SNDSDLGetAudioSpace_Stretch();
 }
 
 static u32 SNDSDLGetAudioSpace_Stretch(void)

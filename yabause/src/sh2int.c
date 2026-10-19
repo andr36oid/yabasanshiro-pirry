@@ -53,7 +53,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "yabause.h"
 
 
-#define INTERRUPT_HANDLING_DELAY 2
 
 #define EXEC_FROM_CACHE
 

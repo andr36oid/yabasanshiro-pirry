@@ -28,8 +28,6 @@ set(yabause_HEADERS
 	yabause.h ygl.h yui.h
 	shaders/FXAA_DefaultES.h
 	frameprofile.h
-	yglperf.h
-	eperf.h
 	sh2cache.h
 	BackupManager.h
 	base64.h

@@ -120,7 +120,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "scsp.h"
 #include "scspdsp.h"
 #include "threads.h"
-#include "eperf.h"
 
 #ifndef max
 #define max(a,b) (((a) > (b)) ? (a) : (b))
@@ -1983,8 +1982,6 @@ static int ExtsKlassikAn(void)
 
 void ScspSetCddaVolume(int v) { g_cdda_vol = (v < 0) ? 0 : (v > 150 ? 150 : v); }
 void ScspSetSfxVolume (int v) { g_sfx_vol  = (v < 0) ? 0 : (v > 150 ? 150 : v); }
-int  ScspGetCddaVolume(void)  { return g_cdda_vol; }
-int  ScspGetSfxVolume (void)  { return g_sfx_vol; }
 
 static u32 cdda_out_left;                       // Bytes of CDDA left to output
 
@@ -4079,7 +4076,6 @@ static s32 FmStapelKl(int m, int k)   /* FM stack delay selection */
   return um ? s_fm_prev[j] : s_fm_prev2[j];
 }
 static int s_fm_warm = 0;
-static u32 s_fm_bloecke = 0, s_fm_slots = 0, s_fm_ruf = 0;
 static int FmKlassikAn(void)
 {
   if (s_fmkl < 0) {
@@ -4142,7 +4138,6 @@ static int FmKlassikBlock(u32 len)
     if (scsp.slot[k].mdl && scsp.slot[k].ecnt < SCSP_ENV_DE && !scsp.slot[k].ssctl) { fm++; }
   if (!fm) { s_fm_warm = 0; return 0; }
   if (!s_fm_warm) { for (k = 0; k < 32; k++) { s_fm_prev[k] = 0; s_fm_prev2[k] = 0; } s_fm_warm = 1; }
-  s_fm_bloecke++; s_fm_slots += fm;
   for (k = 0; k < 32; k++) {   /* preparation as in the normal path */
     slot_t *slot = &scsp.slot[k];
     if (slot->ecnt >= SCSP_ENV_DE) continue;
@@ -5319,7 +5314,6 @@ void SyncSh2And68k(){
 
     if (mem_access_counter++ >= 128) {
       /* mutex passage; runs in the SH2/emu context (SyncSh2And68k is called synchronously from the SoundRam* accessors), so the shared _t0 field is safe */
-      EPERF_BEGIN(sndsync);
 #if defined(ARCH_IS_LINUX)
       pthread_mutex_lock(&sync_mutex);
       pthread_cond_signal(&sync_cnd);
@@ -5328,7 +5322,6 @@ void SyncSh2And68k(){
       sh2_read_req++;
       YabThreadYield();
 #endif  
-      EPERF_END(sndsync, sndsync_ms);
       mem_access_counter = 0;
     }
   }

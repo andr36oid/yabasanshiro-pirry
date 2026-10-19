@@ -223,7 +223,7 @@ static INLINE void *DMAMemoryPointer(u32 address) {
 /* SCU DMA writes to the VDP1 registers (0x5D00000-0x5D7FFFF) are ignored. VDP1 mirrors
    its registers every 256 bytes, so a large transfer would otherwise hit PTMR/ENDR and
    start draws (GunBlaze-S, Ymir). */
-static int ScuDmaVdp1Reg(u32 addr) {
+static INLINE int ScuDmaVdp1Reg(u32 addr) {
    addr &= 0x07FFFFFF;
    return addr >= 0x05D00000 && addr <= 0x05D7FFFF;
 }
@@ -1126,6 +1126,12 @@ void ScuSetAddValue(scudmainfo_struct * dmainfo) {
 
 }
 
+/* SCU DMA from WRAM-H (0x6000000-0x60FFFFF) with WriteAdd 2 into VDP2 VRAM (0x5E00000-0x5EFFFFF) is copied
+   directly, one word per time unit as in the generic loop, without two table lookups and an atomic stamp per
+   word; the page stamps are set once per page afterwards (Vdp2RamBlockWritten). */
+extern void Vdp2RamBlockWritten(u32 addr, u32 bytes);
+extern u8 *Vdp2Ram;
+
 void SucDmaExec(scudmainfo_struct * dma, int * time ) {
   //LOG("DoDMA src=%08X,dst=%08X,size=%d, ra:%d/wa:%d flame=%d:%d\n",
   //  dma->ReadAddress, dma->WriteAddress, dma->TransferNumber, dma->ReadAdd, dma->WriteAdd, yabsys.frame_count, yabsys.LineCount);
@@ -1232,6 +1238,26 @@ void SucDmaExec(scudmainfo_struct * dma, int * time ) {
       // Copy in 16-bit units, avoiding misaligned accesses.
       u32 counter = 0;
       u32 start = dma->WriteAddress;
+      {
+        const u32 d = dma->WriteAddress & 0x0FFFFFFF, s = dma->ReadAddress & 0x0FFFFFFF;
+        if (dma->WriteAdd == 2 && d >= 0x05E00000 && d < 0x05F00000 && s >= 0x06000000 && s < 0x06100000 && *time > 0) {
+          u32 words = ((u32)dma->TransferNumber + 1) >> 1;
+          if (words > (u32)*time) words = (u32)*time;
+          if (words > (0x05F00000 - d) >> 1) words = (0x05F00000 - d) >> 1;
+          if (words > (0x06100000 - s) >> 1) words = (0x06100000 - s) >> 1;
+          for (u32 i = 0; i < words; i++)
+            T1WriteWord(Vdp2Ram, (d + 2 * i) & 0x7FFFF, T2ReadWord(HighWram, (s + 2 * i) & 0xFFFFF));
+          Vdp2RamBlockWritten(d & 0x7FFFF, words * 2);
+          dma->WriteAddress += 2 * words;
+          dma->ReadAddress += 2 * words;
+          dma->TransferNumber -= (s32)(2 * words);
+          *time -= (int)words;
+          if (dma->TransferNumber <= 0) {
+            SH2WriteNotify(start, dma->WriteAddress - start);
+            return;
+          }
+        }
+      }
       while (*time > 0) {
         *time -= 1;
         u16 tmp = MappedMemoryReadWord((dma->ReadAddress & 0x0FFFFFFF), &cycle);
@@ -1364,20 +1390,7 @@ void ScuDmaProc(Scu * scu, int time) {
 
 //////////////////////////////////////////////////////////////////////////////
 static void __attribute__((noinline)) ScuDspExecInner(u32 timing);
-static void __attribute__((noinline)) ScuDspExecReg(u32 timing);
 static void __attribute__((noinline)) ScuDspExecVor(u32 timing);
-/* Fast path of the SCU DSP interpreter (scu_dspreg.inc, generated from
-   ScuDspExecInner): flags/ALU kept in locals instead of memory, no breakpoint
-   loop per instruction. Bit-identical to the plain interpreter. The plain
-   interpreter is used whenever debugger breakpoints are set. */
-static int s_dspreg = -1;
-static int DspRegAn(void) {
-   if (s_dspreg < 0) {
-      s_dspreg = 1;   /* fixed on */
-   }
-   return s_dspreg;
-}
-
 /* Pre-decoding interpreter with a tag cache (16-byte entries, computed goto
    dispatch). The fast path is used only when T0 == 0 and dsp_dma_wait <= 0,
    otherwise exactly one iteration runs in the plain code. Bit-identical to
@@ -1442,8 +1455,6 @@ void ScuExec(u32 timing) {
    if (ScuDsp->ProgControlPort.part.EX) {
       if (ScuBP->numcodebreakpoints == 0 && DspVorAn())
          ScuDspExecVor(timing);
-      else if (DspRegAn() && ScuBP->numcodebreakpoints == 0)
-         ScuDspExecReg(timing);
       else
          ScuDspExecInner(timing);
    }
@@ -2082,7 +2093,6 @@ static void __attribute__((noinline)) ScuDspExecInner(u32 timing) {
       }
 }
 
-#include "scu_dspreg.inc"
 #include "scu_dspvor.inc"
 
 //////////////////////////////////////////////////////////////////////////////
@@ -3483,9 +3493,15 @@ void ScuRemoveVBlankOut() {
 
 //////////////////////////////////////////////////////////////////////////////
 
+/* End of horizontal blanking. Only the slave SH2 loses its HBlank request here:
+   its IRL follows the VDP2 HBlank signal directly. The master's HBlank-IN goes
+   through the SCU, which latches it until the vector fetch acknowledges it, so
+   the end of HBlank must not withdraw it. Withdrawing it dropped every HBlank-IN
+   the master had not accepted within one line, e.g. when the dynarec pays back
+   an overshoot (Lunar: Silver Star Story text box jumps). Port of Yaba Sanshiro
+   1.20.51 scu.c. */
 void ScuRemoveHBlankIN() {
   if (BootBugAn() == 4) {
-    SH2RemoveInterrupt(MSH2, 0x42, 0x0D);
     if (yabsys.IsSSH2Running) SH2RemoveInterrupt(SSH2, 0x41, 0x0D);
   } else
   ScuRemoveInterrupt(0x42, 0x0D, 0x0004);

@@ -57,8 +57,6 @@ static __thread u32 s_src_gen = 0;
 static __thread int s_src_unit = YGL_TEXSRC_NONE;
 
 
-/* Counts cache hits rejected because the entry came from the other unit (see YglIsCached). */
-unsigned long g_unit_fremd = 0;
 
 void YglCacheSetSource(u32 srcaddr, u32 srclen, u32 srcaddr2, u32 srclen2, int unit) {
   s_src_addr = srcaddr; s_src_len = srclen;
@@ -117,9 +115,6 @@ static YglCacheHash * YglgetNewCash(YglTextureManager * tm) {
   return rtn;
 }
 
-/* Tile cache can be disabled for debugging: if the picture becomes correct,
-   the cache key is at fault, not the drawing. */
-int g_nocache = -1;
 
 static int YglIsCached_in(YglTextureManager * tm, u64 addr, YglCache * c);
 int YglIsCached(YglTextureManager * tm, u64 addr, YglCache * c) {
@@ -150,7 +145,6 @@ static int YglIsCached_in(YglTextureManager * tm, u64 addr, YglCache * c) {
            receive a sprite texture (seen in Kingdom Grandprix). */
         if (at->unit != YGL_TEXSRC_NONE && s_src_unit != YGL_TEXSRC_NONE &&
             at->unit != s_src_unit) {
-          g_unit_fremd++;
           return 0;   /* different unit: no hit */
         }
         if (g_texcache_persist) {

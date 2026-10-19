@@ -1407,11 +1407,8 @@ u32 FASTCALL OnchipReadLong(u32 addr) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-#define DMALOG_SCHREIB(b, a, v) do {} while (0)
-#define DMALOG_ENDE(d, i) do {} while (0)
 
 void FASTCALL OnchipWriteByte(u32 addr, u8 val) {
-   DMALOG_SCHREIB("byte", addr, val);
    switch(addr) {
       case 0x000:
 //         LOG("Serial Mode Register write: %02X\n", val);
@@ -1609,7 +1606,6 @@ void FASTCALL OnchipWriteByte(u32 addr, u8 val) {
 //////////////////////////////////////////////////////////////////////////////
 
 void FASTCALL OnchipWriteWord(u32 addr, u16 val) {
-   DMALOG_SCHREIB("word", addr, val);
    switch(addr)
    {
       case 0x060:
@@ -1733,7 +1729,6 @@ void FASTCALL OnchipWriteWord(u32 addr, u16 val) {
 //////////////////////////////////////////////////////////////////////////////
 
 void FASTCALL OnchipWriteLong(u32 addr, u32 val)  {
-   DMALOG_SCHREIB("long", addr, val);
    switch (addr)
    {
    case 0x010:
@@ -2460,7 +2455,6 @@ void DMATransferCycles(Dmac * dmac, int cycles ){
                   // Set Transfer End bit
                   *dmac->CHCR |= 0x2;
                   *dmac->CHCRM |= 0x2;
-                  DMALOG_ENDE(dmac, i);
                   SH2WriteNotify(destInc<0 ? *dmac->DAR : *dmac->DAR - i*destInc, i*abs(destInc));
                   return;
                }
@@ -2484,7 +2478,6 @@ void DMATransferCycles(Dmac * dmac, int cycles ){
                   // Set Transfer End bit
                   *dmac->CHCR |= 0x2;
                   *dmac->CHCRM |= 0x2;
-                  DMALOG_ENDE(dmac, i);
                   SH2WriteNotify(destInc<0 ? *dmac->DAR : *dmac->DAR - i*destInc, i*abs(destInc));
                   return;
                }
@@ -2509,7 +2502,6 @@ void DMATransferCycles(Dmac * dmac, int cycles ){
                   }
                   *dmac->CHCR |= 0x2;
                   *dmac->CHCRM |= 0x2;
-                  DMALOG_ENDE(dmac, i);
                   SH2WriteNotify(destInc<0 ? *dmac->DAR : *dmac->DAR - i*destInc, i*abs(destInc));
                   return;
                }
@@ -2534,7 +2526,6 @@ void DMATransferCycles(Dmac * dmac, int cycles ){
                }
                *dmac->CHCR |= 0x2;
                *dmac->CHCRM |= 0x2;
-                  DMALOG_ENDE(dmac, i);
                SH2WriteNotify(destInc<0 ? *dmac->DAR : *dmac->DAR - i*destInc, i*abs(destInc));
                return;
              }

@@ -83,19 +83,10 @@ int BiosBUPStatusMem( int device, devicestatus_struct * status );
 typedef void(*ON_BACKUP_WRITE_CALLBACK)(char * before, char * after, int size);
 void BiosSetOnBackupWrite(ON_BACKUP_WRITE_CALLBACK cbk);
 
-/* Counter and last vector for unimplemented HLE BIOS calls, see the
-   default branch of BiosHandleFunc() in bios.c. g_bios_game_needs_bios is a
-   sticky flag for the "GAME NEEDS BIOS" screen message (set when an endless
+/* Sticky flag for the "GAME NEEDS BIOS" screen message (set when an endless
    loop signature is detected, see BIOSNEED_STREAK_THRESHOLD in bios.c). */
-extern int g_bios_unimpl_count;
-extern int g_bios_unimpl_last_vector;
 extern int g_bios_game_needs_bios;
 
-/* Start address of the SH2 block most recently executed through the JIT
-   (not through BiosHandleFunc). Updated in DynarecSh2::Execute() before each
-   dynaFunc call and printed by the wild-jump diagnostic in bios.c to identify
-   the game code block a wild jump came from. */
-extern u32 g_dynarec_last_block_addr;
 
 #ifdef __cplusplus
 }

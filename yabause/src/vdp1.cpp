@@ -47,7 +47,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <stdlib.h>
 #include "yabause.h"
 #include "vdp1.h"
-#include "eperf.h"
 #include "instrument.h"
 #include "debug.h"
 #include "scu.h"
@@ -108,7 +107,6 @@ extern "C" void Vdp1RamSnapshot(void) {
    if (snap_an < 0) snap_an = 1;   /* fixed on */
    if (!snap_an) return;
    if (Vdp1RamSnap == NULL || Vdp1Ram == NULL) return;
-   enum { zaehl_an = 0 };
    if (v1_snap_alles) {
       memcpy(Vdp1RamSnap, Vdp1Ram, 0x80000);
       v1_snap_alles = 0;
@@ -142,7 +140,6 @@ condition_variable vdp1_clock_cv;
 mutex vdp1_clock_mtx;
 
 // Texture cache persistence; see the comment in vdp1.h.
-u32 v1_blk_seq[8192];
 u32 v1_page_seq[128];
 u32 v1_wseq;
 u32 v1_flush_seq;
@@ -158,10 +155,8 @@ void Vdp1MarkVramWrite(u32 addr, u32 size) {
    stamps visible to it on ARM64. */
    u32 seq = ++v1_wseq;
    u32 end = (addr + size - 1) & 0x7FFFF;
-   u32 blk0 = addr >> 6, blk1 = end >> 6;
    u32 pg0 = addr >> 12, pg1 = end >> 12;
-/* v1_page_seq is read by YglRangeClean (yglcache.c). The older per-block stamps
-   (v1_blk_seq) are no longer written. */
+/* v1_page_seq is read by YglRangeClean (yglcache.c). */
    __atomic_store_n(&v1_page_seq[pg0], seq, __ATOMIC_RELEASE);  
    if (pg1 != pg0) __atomic_store_n(&v1_page_seq[pg1], seq, __ATOMIC_RELEASE);
 }
@@ -666,6 +661,7 @@ extern "C" void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
 
    int command_count = 0;
    u32 returnAddr = 0xffffffff;
+   int empty_run = 0;
 
    while (!(command & 0x8000) && command_count < 4096) { // fix me
       regs->COPR = regs->addr >> 3;
@@ -680,39 +676,46 @@ extern "C" void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
 #endif
       vdp1_clock -= 10;
 #endif
+      /* Sprite types 2-7 without sprite window: if SDCTL[5:0] is 0 no layer
+         accepts shadow, so a command whose every pixel carries the shadow bit
+         (CMDPMOD "MSB on") has no visible effect on hardware. Drawing it
+         anyway turned the shadow marker black under Gouraud shading
+         (Batsugun: dark band across the middle of the screen). Skip it like
+         a command with the skip bit set; the command chain is unchanged. */
+      if (!(command & 0x4000) && (command & 0xF) <= 7 && (command & 0xF) != 5 && (command & 0xF) != 6 &&
+          (T1ReadWord(ram, regs->addr + 4) & 0x8000) && Vdp2Regs != NULL) {
+         const u16 spctl = Vdp2Regs->SPCTL, sptype = spctl & 0xF;
+         if (sptype >= 2 && sptype < 8 && !(spctl & 0x10) && (Vdp2Regs->SDCTL & 0x3F) == 0)
+            command |= 0x4000;
+      }
+
       // First, process the command
       if (!(command & 0x4000)) { // if (!skip)
          switch (command & 0x000F) {
          case 0: // normal sprite draw
-            EPERF_TPERF_SPR(spr_norm);
             g_v1_gezeichnet++;
             VIDCore->Vdp1NormalSpriteDraw(ram, regs, back_framebuffer);
             break;
          case 1: // scaled sprite draw
-            EPERF_TPERF_SPR(spr_scal);
             g_v1_gezeichnet++;
             VIDCore->Vdp1ScaledSpriteDraw(ram, regs, back_framebuffer);
             break;
          case 2: // distorted sprite draw
          case 3: /* this one should be invalid, but some games
                  (Hardcore 4x4 for instance) use it instead of 2 */
-            EPERF_TPERF_SPR(spr_dist);
             g_v1_gezeichnet++;
             VIDCore->Vdp1DistortedSpriteDraw(ram, regs, back_framebuffer);
             break;
          case 4: // polygon draw
-            EPERF_TPERF_SPR(spr_poly);
             g_v1_gezeichnet++;
             VIDCore->Vdp1PolygonDraw(ram, regs, back_framebuffer);
             break;
          case 5: // polyline draw
          case 7: // undocumented mirror
-            EPERF_TPERF_SPR(spr_pline);
             g_v1_gezeichnet++;
             VIDCore->Vdp1PolylineDraw(ram, regs, back_framebuffer);
             break;
          case 6: // line draw
-            EPERF_TPERF_SPR(spr_line);
             g_v1_gezeichnet++;
             VIDCore->Vdp1LineDraw(ram, regs, back_framebuffer);
             break;
@@ -783,6 +786,20 @@ extern "C" void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
 
       command = T1ReadWord(ram, regs->addr & 0x7FFFF);
       command_count++;
+      /* Four completely empty command slots in a row mean the table has run
+         on into unused VDP1 RAM. Real hardware never gets that far within
+         its drawing time, but without a VDP1 cycle budget we would go on
+         and draw the random data behind it (Batsugun: noise and a dark band
+         in the top part of the screen). Treat it as the end of the list.
+         A single empty slot is legal (Time Bokan starts its list with one). */
+      if (!(command & 0x8000)) {
+         int empty = 1;
+         for (int k = 0; k < 32; k += 2)
+            if (T1ReadWord(ram, (regs->addr + k) & 0x7FFFF)) { empty = 0; break; }
+         empty_run = empty ? empty_run + 1 : 0;
+         if (empty_run >= 4)
+            command |= 0x8000;
+      }
       if (command & 0x8000) {
         LOG("VDP1: Command Finished! count = %d @ %08X", command_count, regs->addr);
         Vdp1External.status = VDP1_STATUS_IDLE;

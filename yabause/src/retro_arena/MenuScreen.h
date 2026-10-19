@@ -206,7 +206,6 @@ public:  // events
 
 protected:
     std::string cuurent_deviceguid_;
-    std::string current_user_;
     std::string current_key_;
     std::string config_file_;
     std::string cuurent_game_id_;

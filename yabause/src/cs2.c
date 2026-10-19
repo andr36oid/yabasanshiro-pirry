@@ -1116,8 +1116,12 @@ void Cs2Exec(u32 timing) {
          default: break;
       }
 
-      if (Cs2Area->_command)
+      if (Cs2Area->_command) {
+         // Raise SCDQ even while a command is pending; only the periodic report is skipped.
+         // Games that poll Get Status in a tight loop (Linkle Liver Story) otherwise never see SCDQ.
+         Cs2SetIRQ(CDB_HIRQ_SCDQ);
          return;
+      }
 
       Cs2Area->status |= CDB_STAT_PERI;
 
