@@ -145,8 +145,6 @@ static unsigned chain2_anzahl = 0;
    link to them. */
 static unsigned chain2_letzter = 0;
 
-static unsigned long long einsprung_verworfen = 0;
-
 /* Remove an already registered cycle again. Removing the chain2_tab entry is
    enough: without it Chain2ImPartner() returns false, so the runtime check
    does not see the program counter "in block". The BLOCK_LOOP flag may stay. */
@@ -155,7 +153,6 @@ static void Chain2VergessenPartner(u32 adr)
   unsigned d = 0;
   for (unsigned i = 0; i < chain2_anzahl; i++) {
     if (chain2_tab[i].partner_b == adr || chain2_tab[i].block_b == adr) {
-      einsprung_verworfen++;
       continue;
     }
     chain2_tab[d++] = chain2_tab[i];
@@ -2592,18 +2589,11 @@ bool operator == (const dIntcTbl & data1 , const dIntcTbl & data2 )
   return ( data1.Vector == data2.Vector );
 }
 
-/* Counts pending interrupts actually removed by RemoveInterrupt, indexed
-   [slave][vector 0x40-0x43]. Printed once per second while RemoveInterrupt
-   was called during that second. */
-static unsigned long s_streich_n[2][4], s_streich_aufr, s_streich_ges[2][4];
-static time_t s_streich_t;
 void DynarecSh2::RemoveInterrupt(u8 Vector, u8 level) {
   YabThreadLock(mtx_);
-  size_t streich_vor = m_IntruptTbl.size();
   m_IntruptTbl.remove_if([&](const dIntcTbl & n) { 
     return n.Vector == Vector; 
   });
-  (void)streich_vor;
   if (m_IntruptTbl.size() != 0) {
     m_IntruptTbl.sort();
     m_pDynaSh2->SysReg[5] = m_IntruptTbl.begin()->level << 4;

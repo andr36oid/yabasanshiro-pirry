@@ -57,14 +57,10 @@ const int tweak_backup_file_size = 1024 * 1024 * 8;
 
 
 
-/* Detection of unimplemented HLE BIOS vectors. g_bios_unimpl_count counts all hits
-   in the default branch of BiosHandleFunc, g_bios_unimpl_last_vector holds the last
-   vector hit. g_bios_game_needs_bios is a sticky flag for the OSD message
-   "GAME NEEDS BIOS"; it is only set when the same vector is hit in quick
-   succession (endless loop signature, see BIOSNEED_STREAK_THRESHOLD/-WINDOW_SEC
-   below), not on a single harmless hit. None of them is reset at run time. */
-int g_bios_unimpl_count = 0;
-int g_bios_unimpl_last_vector = -1;
+/* Detection of unimplemented HLE BIOS vectors. g_bios_game_needs_bios is a sticky flag
+   for the OSD message "GAME NEEDS BIOS"; it is only set when the same vector is hit in
+   quick succession (endless loop signature, see BIOSNEED_STREAK_THRESHOLD/-WINDOW_SEC
+   below), not on a single harmless hit. It is not reset at run time. */
 int g_bios_game_needs_bios = 0;
 
 /* Counters for the two safety nets in this file, read by the profiling output in
@@ -1874,8 +1870,6 @@ int FASTCALL BiosHandleFunc(SH2_struct * sh)
            invalid opcode exception, so the game jumps to its own handler. Setting
            PC = PR or returning 1 instead left the game stalled. */
         int wildsprung = (sh->regs.PC < 0x200 || sh->regs.PC > 0x4FF);
-        g_bios_unimpl_last_vector = (int)idx;
-        g_bios_unimpl_count++;
 
         /* Do not set the "GAME NEEDS BIOS" OSD message on the first hit: only the
            endless loop signature of a hung game (the same vector hit very often

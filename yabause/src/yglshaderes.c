@@ -27,7 +27,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "yui.h"
 #include "vidshared.h"
 #include "shaders/FXAA_DefaultES.h"
-#include "yglperf.h"
 
 #if defined(__LIBRETRO__)
 #define YGLLOG YuiMsg
@@ -236,8 +235,6 @@ int Ygl_uniformVdp1CommonParam(void * p){
            u_fbo bind + flush path (param->fbo becomes -1 once a fetch program is
            selected, see Ygl_DetectFbFetch). ht_n/ht_ms count the whole block,
            flush_n/flush_ms only the barrier + flush below. Measurement only. */
-    YGLPERF_INC(ht_n);
-    YGLPERF_BEGIN(ht);
     glUniform1i(param->fbo, 1);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
@@ -248,17 +245,13 @@ int Ygl_uniformVdp1CommonParam(void * p){
 #elif defined(IOS)
 #else
     if( glMemoryBarrier ){
-      YGLPERF_INC(flush_n);
-      YGLPERF_BEGIN(flush);
       glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT|GL_TEXTURE_UPDATE_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);
       glFlush();
-      YGLPERF_END(flush, flush_ms);
     }else{
       //glFinish();
     }
 #endif
     glActiveTexture(GL_TEXTURE0);
-    YGLPERF_END(ht, ht_ms);
   }
 
   return 0;
@@ -3461,7 +3454,6 @@ static const GLchar ** Ygl_SelectFbFetchFragSrc(const GLchar * fallback[], const
 int YglProgramInit()
 {
    Ygl_DetectFbFetch();
-   YglPerfDetect();
 
    //
    if (YglInitShader(PG_NORMAL, pYglprg_normal_v, pYglprg_normal_f, 1, NULL, NULL, NULL) != 0)
@@ -4981,7 +4973,6 @@ int YglBlitBlur(u32 srcTexture, u32 targetFbo, float w, float h, float * matrix)
     blur_prg = glCreateProgram();
     if (blur_prg == 0) return -1;
 
-    YglUseProgramCached(blur_prg);
     vshader = glCreateShader(GL_VERTEX_SHADER);
     fshader = glCreateShader(GL_FRAGMENT_SHADER);
 
@@ -5016,6 +5007,7 @@ int YglBlitBlur(u32 srcTexture, u32 targetFbo, float w, float h, float * matrix)
       return -1;
     }
 
+    YglUseProgramCached(blur_prg);
     glUniform1i(glGetUniformLocation(blur_prg, "u_Src"), 0);
     u_blur_mtxModelView = glGetUniformLocation(blur_prg, (const GLchar *)"u_mvpMatrix");
     u_blur_tw = glGetUniformLocation(blur_prg, "u_tw");
@@ -5137,7 +5129,6 @@ int YglBlitMosaic(u32 srcTexture, u32 targetFbo, float w, float h, float * matri
     mosaic_prg = glCreateProgram();
     if (mosaic_prg == 0) return -1;
 
-    YglUseProgramCached(mosaic_prg);
     vshader = glCreateShader(GL_VERTEX_SHADER);
     fshader = glCreateShader(GL_FRAGMENT_SHADER);
 
@@ -5172,6 +5163,7 @@ int YglBlitMosaic(u32 srcTexture, u32 targetFbo, float w, float h, float * matri
       return -1;
     }
 
+    YglUseProgramCached(mosaic_prg);
     glUniform1i(glGetUniformLocation(mosaic_prg, "u_Src"), 0);
     u_mosaic_mtxModelView = glGetUniformLocation(mosaic_prg, (const GLchar *)"u_mvpMatrix");
     u_mosaic_tw = glGetUniformLocation(mosaic_prg, "u_tw");
@@ -5473,7 +5465,6 @@ int YglBlitScanlineFilter(u32 sourceTexture, u32 draw_res_v, u32 staturn_res_v) 
     scanline_prg = glCreateProgram();
     if (scanline_prg == 0) return -1;
 
-    YglUseProgramCached(scanline_prg);
     vshader = glCreateShader(GL_VERTEX_SHADER);
     fshader = glCreateShader(GL_FRAGMENT_SHADER);
 
@@ -5508,6 +5499,7 @@ int YglBlitScanlineFilter(u32 sourceTexture, u32 draw_res_v, u32 staturn_res_v) 
       return -1;
     }
 
+    YglUseProgramCached(scanline_prg);
     glUniform1i(glGetUniformLocation(scanline_prg, "u_Src"), 0);
     a_scanline_PosCoord = glGetAttribLocation(scanline_prg, "aPosition");
     a_scanline_TexCoord = glGetAttribLocation(scanline_prg, "aTexCoord");
@@ -5540,7 +5532,9 @@ int YglBlitScanlineFilter(u32 sourceTexture, u32 draw_res_v, u32 staturn_res_v) 
   glUniform1i(glGetUniformLocation(scanline_prg, "u_Src"), 0);
   glUniform1f(u_scanline_th, (float)draw_res_v);
 
-  float by = (float)(draw_res_v) / (int)(draw_res_v / (staturn_res_v*2));
+  int scan_div = (int)(draw_res_v / (staturn_res_v*2));
+  if (scan_div < 1) scan_div = 1;
+  float by = (float)(draw_res_v) / scan_div;
   glUniform1f(u_scanline_oth, by);
 
 

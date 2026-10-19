@@ -57,7 +57,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "osdcore.h"
 #include "bios.h"
 #include "threads.h"
-#include "eperf.h"
 #include "yui.h"
 #include "frameprofile.h"
 #include "vidogl.h"
@@ -157,7 +156,6 @@ static int frameLimitShift = 0;
 
 /* per-layer mask, defined in vidogl.c (C linkage) */
 extern "C" unsigned char g_nbgweg[5];
-extern "C" unsigned int g_perlineident_um;
 
 
 YabEventQueue * command_ = NULL;
@@ -376,24 +374,19 @@ static void Vdp1MarkRenderRetired(void) {
 static void Vdp1JoinPendingRenders(unsigned long long *wo) {
   /* Time from here counts as emulation thread block, including the spin. */
   struct timespec _tj; emublk_start(&_tj);
-  EPERF_BEGIN(join);
-  EPERF_JOIN_COUNT();
   for (int i = 0; i < 2000; i++) {
     if (vdp1_ev_retired.load(std::memory_order_acquire) >=
         vdp1_ev_dispatched.load(std::memory_order_relaxed)) {
-      EPERF_END(join, join_ms);
       emublk_ende_an(&_tj, &g_eb_join_ns, wo);
       return;
     }
   }
-  EPERF_JOIN_BLOCK();
   pthread_mutex_lock(&vdp1_join_mtx);
   while (vdp1_ev_retired.load(std::memory_order_acquire) <
          vdp1_ev_dispatched.load(std::memory_order_relaxed)) {
     pthread_cond_wait(&vdp1_join_cv, &vdp1_join_mtx);
   }
   pthread_mutex_unlock(&vdp1_join_mtx);
-  EPERF_END(join, join_ms);
   emublk_ende_an(&_tj, &g_eb_join_ns, wo);
 }
 
@@ -475,6 +468,23 @@ static inline void Vdp2MarkVramWrite(u32 addr, u32 size) {
   __atomic_store_n(&v2_page_seq[addr >> 12], seq, __ATOMIC_RELEASE);
   if ((end >> 12) != (addr >> 12))
     __atomic_store_n(&v2_page_seq[end >> 12], seq, __ATOMIC_RELEASE);
+}
+
+/* After a contiguous block write (SCU DMA, SucDmaExec in scu.c) set the bank flags and the page
+   stamps once per touched 4 KB page instead of once per word. Called after the data is written,
+   so the render thread only sees the stamp when the data is in place. */
+extern "C" void Vdp2RamBlockWritten(u32 addr, u32 bytes) {
+  if (bytes == 0) return;
+  addr &= 0x7FFFF;
+  u32 rest = bytes;
+  u32 a = addr;
+  while (rest > 0) {
+    u32 page_end = (a | 0xFFF) + 1;
+    u32 n = page_end - a; if (n > rest) n = rest;
+    if (a < 0x20000) A0_Updated = 1; else if (a < 0x40000) A1_Updated = 1; else if (a < 0x60000) B0_Updated = 1; else B1_Updated = 1;
+    Vdp2MarkVramWrite(a, n);
+    rest -= n; a = (a + n) & 0x7FFFF;
+  }
 }
 
 //#define VRAM_WRITE_CHECK 1
@@ -1995,9 +2005,7 @@ void vdp2VBlankOUT(void) {
      FRAMELOG("Vdp2DrawScreens");
     /* Runs on the VdpProc render thread, not on the emulation thread, hence the cross-thread macro
        with a local stack t0. */
-    EPERF_XT_BEGIN(_eperf_vdp2cpu_t0);
     VIDCore->Vdp2DrawScreens();
-    EPERF_XT_END(_eperf_vdp2cpu_t0, vdp2cpu_ms);
   }
 
   if (isrender){

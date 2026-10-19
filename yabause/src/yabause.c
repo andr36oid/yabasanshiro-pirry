@@ -50,7 +50,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <string.h>
 #include <stdlib.h>
 #include "yabause.h"
-#include "eperf.h"
 #include "cheat.h"
 #include "cs0.h"
 #include "cs2.h"
@@ -715,7 +714,6 @@ int g_perline_teile = 2;   /* SH2Exec slices per line in the per-line path */
 
 int YabauseEmulate(void) {
    int oneframeexec = 0;
-   EPerfFrameBegin();
    yabsys.frame_count++;
    PlayRecorder_proc(yabsys.frame_count);
 
@@ -778,7 +776,6 @@ int YabauseEmulate(void) {
        YabauseDynarecOneFrameExec(722,0); // m68kcycles,m68kcenticycles
      else
        YabauseDynarecOneFrameExec(716,20);
-     EPerfFrameTick();
      return 0;
    }
    #endif
@@ -811,7 +808,6 @@ int YabauseEmulate(void) {
       /* In the per-line path sh2cycles is not executed here but below in two parts,
          interleaved with HBlankIN/HBlankOUT. */
       if (yabsys.DecilineMode || sync_shift != 0) {
-      EPERF_BEGIN(sh2);
       if( sync_shift != 0 ){
         u32 i;
         const u32 div = sync_shift;
@@ -833,7 +829,6 @@ int YabauseEmulate(void) {
         if (yabsys.IsSSH2Running)
           SH2Exec(SSH2, sh2cycles);
       }
-      EPERF_END(sh2, sh2_ms);
       }
 
 #ifdef YAB_STATICS
@@ -851,7 +846,6 @@ int YabauseEmulate(void) {
          const u32 part1 = (sh2cycles * 9u) / 10u;   /* decilines 1..9 */
          const u32 part2 = sh2cycles - part1;        /* deciline 10     */
 
-         EPERF_BEGIN(sh2);
          /* After an FRT doorbell, 263 lines use at least 3 slices. */
          int teile_ = g_perline_teile;
          if (g_db_fein > 0) { if (teile_ < 3 && Dbf3Stueckelung()) teile_ = 3; g_db_fein--; }
@@ -872,16 +866,13 @@ int YabauseEmulate(void) {
             SH2Exec(MSH2, part1);
             if (yabsys.IsSSH2Running) SH2Exec(SSH2, part1);
          }
-         EPERF_END(sh2, sh2_ms);
 
          PROFILE_START("hblankin");
          Vdp2HBlankIN();
          PROFILE_STOP("hblankin");
 
-         EPERF_BEGIN(sh2);
          SH2Exec(MSH2, part2);
          if (yabsys.IsSSH2Running) SH2Exec(SSH2, part2);
-         EPERF_END(sh2, sh2_ms);
 
          PROFILE_START("hblankout");
          Vdp2HBlankOUT();
@@ -1073,7 +1064,6 @@ int YabauseEmulate(void) {
    SSH2->onchip.cache.write_count = 0;
 #endif
 
-   EPerfFrameTick();
    return 0;
 }
 

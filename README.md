@@ -27,7 +27,12 @@ Since 1.6.0 the emulator supports [RetroAchievements](https://retroachievements.
 Network access uses the system's libcurl, loaded at run time; without it the
 emulator runs as before. Nothing is sent unless you log in.
 
-Current version: **1.6.0**
+1.6.1 shortens loading waits for games that wait for the CD drive's position
+report, fixes intro videos that were black or slowed down, removes a stripe of
+garbage at the top of the screen in some games, and removes about 1,270 lines
+of dead code. The release build writes no log files and no console output.
+
+Current version: **1.6.1**
 
 ## Building
 

@@ -140,7 +140,6 @@ void Vdp1RamSnapAllesNeu(void);
 // (set on reset and savestate load). Deliberately without atomics (writer: emulation
 // thread, reader: render thread); a late-seen stamp can only invalidate one frame
 // too late, never validate too early.
-extern u32 v1_blk_seq[8192];
 extern u32 v1_page_seq[128];
 extern u32 v1_wseq;
 extern u32 v1_flush_seq;

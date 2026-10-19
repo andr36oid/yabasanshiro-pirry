@@ -60,6 +60,16 @@ Preference::~Preference(){
    built in; only `state path` is taken from `~/.yabasanshiro/default.config`
    if it is set there. */
 void Preference::lege_standard_an(){
+  /* Another Preference instance may have created the file since this one was
+     constructed. Never replace it, or that instance's settings would be lost. */
+  {
+    std::ifstream schon( this->filename );
+    if (schon.good()) {
+      this->gab_es_schon = true;
+      return;
+    }
+  }
+
   /* Defaults that apply everywhere, independent of the device. */
   json vorlage = json::object();
   vorlage["Aspect rate"]              = 0;
@@ -108,6 +118,11 @@ void Preference::lege_standard_an(){
    by stale values from `j`. */
 void Preference::schreibe_nur_geaenderte(){
   if (this->geaenderte_schluessel.empty()) return;
+
+  /* First write of a new config: create it with the defaults (including
+     `state path`) and merge the changed keys into that, instead of writing a
+     file that only holds the changed keys. */
+  if (!this->gab_es_schon) lege_standard_an();
 
   json auf_platte;
   try{

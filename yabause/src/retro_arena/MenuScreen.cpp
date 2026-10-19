@@ -1322,124 +1322,7 @@ void MenuScreen::setupPlayerPsuhButton( int user_index, PopupButton *player, con
   }
 
 
-  // Device selection ComboBox for the player pad popup is disabled (#if 0), as in
-  // the 1.20 fork: the popup already holds 17 key-mapping buttons plus the
-  // analog toggle, and an extra row would extend past the bottom of a 640x480
-  // screen. setCurrentInputDevices() only updates player_configs_[i].cb behind
-  // a "cb != nullptr" gate, so that path stays inactive.
-#if 0
-  ComboBox * cb = new ComboBox(popup);
-  vector<string> items;
-  vector<string> itemsShort;
-  int index = 0;
-  int selindex = -1;
-  for( auto it = joysticks_.begin(); it != joysticks_.end() ; ++it ) {
-    SDL_Joystick* joy = it->second;
-    SDL_JoystickID joyId = SDL_JoystickInstanceID(joy);
-    char guid[65];
-    SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joy), guid, 65);
-    string key_string;
-    InputManager::genJoyString( key_string, joyId, SDL_JoystickName(joy), guid );
-    if( selguid  == key_string ){
-      selindex = index;
-    }
-    index++;
-    items.push_back( key_string );
-    itemsShort.push_back(SDL_JoystickName(joy));
-  }  
-  cb->setItems(itemsShort);
-
-  if( selindex != -1 ){
-    cb->setSelectedIndex(selindex);
-  }
-
-  Popup *cbpopup = cb->popup(); 
-  cb->setCallback([this,cbpopup,cb]() {       
-    pushActiveMenu(cbpopup, cb );
-  });
-  
-  cb->setCallbackSelect([this, userid]( int idx ) {
-      popActiveMenu();
-
-      SDL_JoystickID joyId = -1;
-      int itenindex = 0;
-      std::string device_name = "Keyboard";
-      string guid_only = "-1";
-      cuurent_deviceguid_ = "-1_Keyboard_-1";
-      if( idx >= joysticks_.size() ){
-        cuurent_deviceguid_ = "-1_Keyboard_-1"; // keyboard may be
-      }else{
-        for( auto it = joysticks_.begin(); it != joysticks_.end() ; ++it ) {
-          if( itenindex == idx ){
-            SDL_Joystick* joy = it->second;
-            joyId = SDL_JoystickInstanceID(joy);
-            char guid[65];
-            string joy_name_and_guid;
-            SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joy), guid, 65);
-            InputManager::genJoyString( joy_name_and_guid, joyId, SDL_JoystickName(joy),  guid );
-            cuurent_deviceguid_ = joy_name_and_guid;
-            MENU_LOG("cuurent_deviceguid_ = %s\n", cuurent_deviceguid_.c_str() );
-            device_name = SDL_JoystickName(joy);
-            guid_only = guid;
-            break;
-          }
-          itenindex++;
-        }
-      }
-
-      json j;
-      std::ifstream fin( this->config_file_ );
-      fin >> j;
-      fin.close();
-      //if( j.find(userid) == j.end() ) {
-      //  return;
-      //}            
-      j[userid]["deviceGUID"] = guid_only;
-      j[userid]["DeviceID"]   = joyId;
-      j[userid]["deviceName"] = device_name;
-
-      if( cuurent_deviceguid_ != "Disable_-2"){
-        for( int i=0; i<player_configs_.size(); i++ ){
-          std::stringstream ss;
-          ss << "player" << (i+1);
-          std::string taeget_userid = ss.str();
-          if( userid != taeget_userid){
-            if( j.find(taeget_userid) != j.end()){
-              std::string other_guid;
-              InputManager::genJoyString( other_guid, j[taeget_userid]["DeviceID"],  j[taeget_userid]["deviceName"], j[taeget_userid]["deviceGUID"] );
-              if( other_guid == cuurent_deviceguid_ ){
-                // Select Disable
-                j[taeget_userid]["deviceGUID"] = "-2";
-                j[taeget_userid]["DeviceID"] = -2;
-                j[taeget_userid]["deviceName"] = "Disable";    
-                const std::vector<std::string> & items = player_configs_[i].cb->items(); 
-                for( int ii = 0; ii < items.size(); ii++ ) {
-                  if( items[ii] == j[taeget_userid]["deviceName"] ){
-                    player_configs_[i].cb->setSelectedIndex(ii);
-                  }
-                }
-              }
-            }
-          }
-        }      
-      }
-      this->performLayout();
-      std::ofstream out(this->config_file_);
-      out << j.dump(2);
-      out.close();        
-
-      SDL_Event event = {};
-      event.type = this->update_config_;
-      event.user.code = 0;
-      event.user.data1 = 0;
-      event.user.data2 = 0;
-      SDL_PushEvent(&event);         
-
-  });
-
-
-  *cbo = cb;
-#endif
+  // No device selection ComboBox in the player pad popup (it would not fit on a 640x480 screen).
 
   Button * ba = new Button(wrapper,"Analog mode");
   ba->setFlags(Button::ToggleButton);
@@ -1485,9 +1368,6 @@ void MenuScreen::setupPlayerPsuhButton( int user_index, PopupButton *player, con
   
   player->setCallback([this,wrapper,player,user_index]() {
     pushActiveMenu(wrapper,player);
-    std::stringstream s ;
-    s << "player" << user_index;
-    current_user_ = s.str();
 
   });
 
@@ -1609,16 +1489,7 @@ int MenuScreen::onRawInputEvent( InputManager & imp, const std::string & deviceg
   // The deviceguid comparison is disabled (#if 0), as in the 1.20 fork.
   // deviceguid comes from InputManager.cpp with the live SDL instance ID
   // (joy_name_and_guid, see genJoyString: "<InstanceID>_<Name>_<GUID>"), while
-  // cuurent_deviceguid_ is built via getSelectedGUID() from the DeviceID stored
-  // in keymapv3.json. SDL reassigns instance IDs per connection order/hotplug,
-  // so the two may differ (e.g. after a restart with another USB order); the
-  // comparison would then never match and the key assignment dialog would not
-  // register a key press.
-#if 0
-  if( deviceguid != cuurent_deviceguid_ ){
-    return -1;
-  }
-#endif
+  // The device GUID is not compared: SDL instance IDs change with the connection order.
 
   // wait for key input?
   if( current_key_ != "l" && current_key_ != "r" ) {
