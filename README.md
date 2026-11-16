@@ -22,17 +22,7 @@ multi-disc support via `.m3u`, and the extended in-game menu.
 Every fix applies to all games — there are no per-game hacks and no hidden
 runtime switches. What you build here is exactly the released emulator.
 
-Since 1.6.0 the emulator supports [RetroAchievements](https://retroachievements.org)
-(rcheevos): login in the menu, achievement list, hardcore mode and leaderboards.
-Network access uses the system's libcurl, loaded at run time; without it the
-emulator runs as before. Nothing is sent unless you log in.
-
-1.6.1 shortens loading waits for games that wait for the CD drive's position
-report, fixes intro videos that were black or slowed down, removes a stripe of
-garbage at the top of the screen in some games, and removes about 1,270 lines
-of dead code. The release build writes no log files and no console output.
-
-Current version: **1.6.1**
+Current version: **1.6.3**
 
 ## Building
 
@@ -44,9 +34,7 @@ The resulting binary needs **glibc 2.38 or newer** on the handheld (dArkOS).
 
 ```bash
 sudo apt install build-essential cmake git pkg-config \
-    libsdl2-dev libboost-system-dev libboost-filesystem-dev \
-    libboost-date-time-dev libboost-locale-dev \
-    libgles-dev libegl-dev libgbm-dev libdrm-dev libudev-dev \
+    libsdl2-dev libgles-dev libegl-dev libgbm-dev libdrm-dev libudev-dev \
     libasound2-dev libopenal-dev libpng-dev zlib1g-dev
 ```
 
@@ -122,6 +110,21 @@ sudo cp /etc/resolv.conf /srv/trixie-arm64/etc/
 sudo chroot /srv/trixie-arm64 /bin/bash
 # inside the chroot: steps 1–4 above
 ```
+
+ ### Building for RK3566 (Cortex-A55)
+
+  This project is developed and tested on RK3326 (Cortex-A35) only. An RK3326 build
+  also runs on RK3566 handhelds. To tune the build for that chip instead, replace
+  `-mcpu=cortex-a35` with `-mcpu=cortex-a55` in `CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS`
+  (step 3), and in `CMAKE_EXE_LINKER_FLAGS` if you use the LTO build above.
+
+  **A Cortex-A55 build is for RK3566 only.** It can use CPU instructions that the
+  Cortex-A35 does not have, so expect illegal-instruction crashes on RK3326 devices.
+
+  We don't test or publish RK3566 builds. A contributor reports that it runs on a
+  Powkiddy RGB30 with dArkOS and saw a small gain in one title, see
+  [PR #3](https://github.com/pirrypirrypirry/yabasanshiro-pirry/pull/3).
+
 
 ## License
 

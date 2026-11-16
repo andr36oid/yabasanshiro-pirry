@@ -22,7 +22,7 @@
 #include "ygl.h"
 #include "yui.h"
 #include "vidshared.h"
-extern u16 Vdp2TvmdFuerRender(void);   /* vdp2.cpp */
+extern u16 Vdp2TvmdForRender(void);   /* vdp2.cpp */
 #include "debug.h"
 #include "frameprofile.h"
 /* The render thread reads the line registers through this pointer: live or from the snapshot (see vdp2.cpp). */
@@ -572,8 +572,12 @@ void YglTMDeInit(YglTextureManager *tm)
 
 //////////////////////////////////////////////////////////////////////////////
 
+/* Content of fixed slots is only valid within one atlas generation. */
+unsigned int g_slot_atlas_gen = 0;
+
 void YglTMReset(YglTextureManager *tm)
 {
+  g_slot_atlas_gen++;
   tm->currentX = 0;
   tm->currentY = 0;
   tm->yMax = 0;
@@ -591,10 +595,7 @@ void YglTMClearFlushRequest_(void) { s_tm_flush_request = 0; }
 /* Upload the dirty region as up to four separate bands instead of one rectangle, so that a
    fixed slot at the bottom plus new textures at the top do not force re-uploading everything
    in between. Gaps of <= 8 rows are merged; on overflow the two closest bands are merged. */
-static int DirtyBandAn(void) {
-  return 1;   /* fixed: enabled */
-}
-static void DirtyBandVerschmelzen(YglTextureManager *tm) {
+static void DirtyBandMerge(YglTextureManager *tm) {
   int i, j, k;
   for (i = 0; i < tm->band_n; i++)
     for (j = i + 1; j < tm->band_n; j++)
@@ -606,9 +607,9 @@ static void DirtyBandVerschmelzen(YglTextureManager *tm) {
       }
 }
 /* Fixed slots (YglQuadSlot, line raster) are uploaded as an exact rectangle when
-   InterHalbAktiv() is set; otherwise as a band of full atlas width. The rectangle
+   InterlaceHalfActive() is set; otherwise as a band of full atlas width. The rectangle
    upload uses GL_UNPACK_ROW_LENGTH = atlas width. */
-int InterHalbAktiv(void);   /* vidogl.c */
+int InterlaceHalfActive(void);   /* vidogl.c */
 void YglTMDirtyRectXY(YglTextureManager * tm, int x, int y, int w, int h) {
   if (tm->rect_n >= 8) { YglTMDirtyRect(tm, y, h); return; }   /* full: fall back to a row band */
   tm->rect_x[tm->rect_n] = x; tm->rect_y[tm->rect_n] = y; tm->rect_w[tm->rect_n] = w; tm->rect_h[tm->rect_n] = h; tm->rect_n++;
@@ -617,7 +618,6 @@ void YglTMDirtyRectXY(YglTextureManager * tm, int x, int y, int w, int h) {
 void YglTMDirtyRect(YglTextureManager * tm, int y, int h) {
   if (y < tm->dirty_ymin) tm->dirty_ymin = y;
   if (y + h > tm->dirty_ymax) tm->dirty_ymax = y + h;
-  if (!DirtyBandAn()) return;
   {
     const int y1 = y + h;
     int i;
@@ -625,7 +625,7 @@ void YglTMDirtyRect(YglTextureManager * tm, int y, int h) {
       if (y <= tm->band_y1[i] + 8 && tm->band_y0[i] <= y1 + 8) {
         if (y < tm->band_y0[i]) tm->band_y0[i] = y;
         if (y1 > tm->band_y1[i]) tm->band_y1[i] = y1;
-        DirtyBandVerschmelzen(tm);
+        DirtyBandMerge(tm);
         return;
       }
     if (tm->band_n == 4) {   /* full: merge the two closest bands */
@@ -638,10 +638,10 @@ void YglTMDirtyRect(YglTextureManager * tm, int y, int h) {
       if (tm->band_y1[b] > tm->band_y1[a]) tm->band_y1[a] = tm->band_y1[b];
       tm->band_y0[b] = tm->band_y0[3]; tm->band_y1[b] = tm->band_y1[3];
       tm->band_n = 3;
-      DirtyBandVerschmelzen(tm);
+      DirtyBandMerge(tm);
     }
     tm->band_y0[tm->band_n] = y; tm->band_y1[tm->band_n] = y1; tm->band_n++;
-    DirtyBandVerschmelzen(tm);
+    DirtyBandMerge(tm);
   }
 }
 
@@ -660,6 +660,11 @@ void YglTMReserve(YglTextureManager * tm, unsigned int w, unsigned int h){
 }
 #endif
 
+/* Without an explicit fence, glMapBufferRange on the atlas buffer waits for all GL commands queued so far
+   (including the drawing of the frame). Waiting on a fence placed right after the upload only waits for
+   the upload itself. */
+static GLsync s_upload_fence = 0;
+
 void YglTmPush(YglTextureManager *tm)
 {
   glActiveTexture(GL_TEXTURE0);
@@ -668,7 +673,7 @@ void YglTmPush(YglTextureManager *tm)
   {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, tm->pixelBufferID_in[tm->current]);
     glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
-    if (g_texcache_persist && DirtyBandAn()) {
+    if (g_texcache_persist) {
       int i;
       for (i = 0; i < tm->band_n; i++) {
         int y0 = tm->band_y0[i], y1 = tm->band_y1[i];
@@ -694,7 +699,7 @@ void YglTmPush(YglTextureManager *tm)
           glTexSubImage2D(GL_TEXTURE_2D, 0, x0, y0, w, y1 - y0, GL_RGBA, GL_UNSIGNED_BYTE,
                           (const GLvoid *)(size_t)(((size_t)y0 * tm->width + x0) * 4));
         }
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);   /* zwingend: CRAM-Upload (Client-Zeiger) erwartet 0 */
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);   /* required: the CRAM upload (client pointer) expects 0 */
         tm->rect_n = 0;
       }
       tm->band_n = 0;
@@ -715,6 +720,9 @@ void YglTmPush(YglTextureManager *tm)
     }
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     tm->texture = NULL;
+    /* Fence right after the atlas upload; YglTmPull waits for it before mapping again. */
+    if (s_upload_fence) glDeleteSync(s_upload_fence);
+    s_upload_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
   }
 }
 
@@ -727,6 +735,11 @@ void YglTmPull(YglTextureManager *tm, u32 flg)
     glBindTexture(GL_TEXTURE_2D, tm->textureID_in[tm->current]);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, tm->pixelBufferID_in[tm->current]);
 
+    if (s_upload_fence) {
+      glClientWaitSync(s_upload_fence, GL_SYNC_FLUSH_COMMANDS_BIT, 100000000ULL);   /* at most 100 ms */
+      glDeleteSync(s_upload_fence);
+      s_upload_fence = 0;
+    }
     {
       GLbitfield mf;
       /* Mapping the whole atlas is costly; INVALIDATE must not be used on the
@@ -760,6 +773,7 @@ void YglTmPull(YglTextureManager *tm, u32 flg)
 
 void YglTMRealloc(YglTextureManager *tm, unsigned int width, unsigned int height)
 {
+  g_slot_atlas_gen++;
 
   GLuint new_textureID[2];
   GLuint new_pixelBufferID[2];
@@ -860,8 +874,8 @@ void YglTMAllocate(YglTextureManager *tm, YglTexture *output, unsigned int w, un
        yields wrong tiles for the current frame). The required h*2 always applies. */
     unsigned int nh = tm->height + (h * 2);
     {
-      static const int schritt = 1024;   /* fixed growth step in rows */
-      unsigned int ns = tm->height + (unsigned int)schritt;
+      static const int step_val = 1024;   /* fixed growth step in rows */
+      unsigned int ns = tm->height + (unsigned int)step_val;
       if (ns > 4096) ns = 4096;
       if (ns > nh) nh = ns;
     }
@@ -1207,8 +1221,8 @@ void VIDOGLVdp1ReadFrameBuffer(u32 type, u32 addr, void *out)
      which needs a current GL context that only the render thread has. This call can
      come from the SH2 thread, so outside the render thread use the existing software
      path instead of aborting. Only affects titles that read back the VDP1 framebuffer. */
-  { extern int YabIstRenderfaden(void);
-    if (!YabIstRenderfaden()) {
+  { extern int YabIsRenderThread(void);
+    if (!YabIsRenderThread()) {
       switch (type)
       {
       case 0: *(u8  *)out = T1ReadByte(Vdp1FrameBuffer[_Ygl->drawframe], addr); break;
@@ -1892,13 +1906,6 @@ int YglInit(int width, int height, unsigned int depth)
 
 //////////////////////////////////////////////////////////////////////////////
 
-/* Scissor clip fast path: for the user clip inner mode (2) a glScissor rectangle
-   replaces the stencil. glScissor is global GL state, unlike the stencil which is
-   set per program. */
-static int clipfast_an(void)
-{
-  return 1;   /* fixed: scissor clip fast path enabled */
-}
 void YglDeInit(void)
 {
   unsigned int i, j;
@@ -1958,7 +1965,7 @@ YglProgram *YglGetProgram(YglSprite *input, int prg)
     // Scissor clip fast path: the inner mode (2, "draw inside") is representable as a
     // rectangle, so glScissor replaces the costly stencil redraw (clear + mask quad +
     // test). The outer mode (3) stays on stencil (not a rectangle).
-    if (input->uclipmode == 0x02 && clipfast_an())
+    if (input->uclipmode == 0x02)
     {
       YglProgramChange(level, PG_VDP1_USER_CLIP);
       program = &level->prg[level->prgcurrent];
@@ -1989,7 +1996,7 @@ YglProgram *YglGetProgram(YglSprite *input, int prg)
     }
     else
     {
-      if (level->uclipcurrent == 0x02 && clipfast_an())
+      if (level->uclipcurrent == 0x02)
         YglProgramChange(level, PG_VDP1_SYSTEM_CLIP);
       else
         YglProgramChange(level, PG_VFP1_ENDUSERCLIP);
@@ -1999,30 +2006,35 @@ YglProgram *YglGetProgram(YglSprite *input, int prg)
     level->uclipcurrent = input->uclipmode;
   }
 
+  /* In the merged Gouraud program only the VDP2 bit pair of the blend mode
+     matters (& 0x03): SPD and normal Gouraud polygons no longer split the batch.
+     The blend mode of a VDP1 program is not read when it is drawn. */
+  int bm_in = input->blendmode;
+  if (prg == PG_VFP1_GOURAUDSAHDING) bm_in &= 0x03;
   checkval = (float)(input->cor) / 255.0f;
   if (checkval != level->prg[level->prgcurrent].color_offset_val[0])
   {
     YglProgramChange(level, prg);
     level->prg[level->prgcurrent].id = input->id;
-    level->prg[level->prgcurrent].blendmode = input->blendmode;
+    level->prg[level->prgcurrent].blendmode = bm_in;
   }
   else if (level->prg[level->prgcurrent].prgid != prg)
   {
     YglProgramChange(level, prg);
     level->prg[level->prgcurrent].id = input->id;
-    level->prg[level->prgcurrent].blendmode = input->blendmode;
+    level->prg[level->prgcurrent].blendmode = bm_in;
   }
-  else if (level->prg[level->prgcurrent].blendmode != input->blendmode)
+  else if (level->prg[level->prgcurrent].blendmode != bm_in)
   {
     YglProgramChange(level, prg);
     level->prg[level->prgcurrent].id = input->id;
-    level->prg[level->prgcurrent].blendmode = input->blendmode;
+    level->prg[level->prgcurrent].blendmode = bm_in;
   }
   else if (input->id != level->prg[level->prgcurrent].id)
   {
     YglProgramChange(level, prg);
     level->prg[level->prgcurrent].id = input->id;
-    level->prg[level->prgcurrent].blendmode = input->blendmode;
+    level->prg[level->prgcurrent].blendmode = bm_in;
   }
   // for polygon debug
   // else if (prg == PG_VFP1_GOURAUDSAHDING ){
@@ -2190,6 +2202,7 @@ int YglTriangleGrowShading_in(YglSprite *input, YglTexture *output, float *color
   unsigned int x, y;
   YglProgram *program;
   int prg = PG_VFP1_GOURAUDSAHDING;
+  int spd = 0;
   float *pos;
   int u, v;
 
@@ -2216,7 +2229,7 @@ int YglTriangleGrowShading_in(YglSprite *input, YglTexture *output, float *color
   }
   else if (input->blendmode == VDP1_COLOR_SPD)
   {
-    prg = PG_VFP1_GOURAUDSAHDING_SPD;
+    spd = 1;   /* drawn with the normal Gouraud program, see spd_r */
   }
 
   if (input->linescreen == 1)
@@ -2256,7 +2269,9 @@ int YglTriangleGrowShading_in(YglSprite *input, YglTexture *output, float *color
     y = c->y;
   }
 
-  texv[0].r = texv[1].r = texv[2].r = texv[3].r = texv[4].r = texv[5].r = 0;    // these can stay at 0
+  /* r carries the SPD flag: the Gouraud shader keeps alpha 0 pixels when r >= 0.5 */
+  const float spd_r = (spd && prg == PG_VFP1_GOURAUDSAHDING) ? 1.0f : 0.0f;
+  texv[0].r = texv[1].r = texv[2].r = texv[3].r = texv[4].r = texv[5].r = spd_r;
   texv[0].q = texv[1].q = texv[2].q = texv[3].q = texv[4].q = texv[5].q = 1.0f; // these can stay at 0
 
   if (input->flip & 0x1)
@@ -2324,7 +2339,7 @@ int YglTriangleGrowShading_in(YglSprite *input, YglTexture *output, float *color
       tess_count = (colors != NULL) ? 2 : 1;        /* flat color */
     } else {
       tess_count = YglGetOptimalTessCount(input->vertices);
-      if (tess_count < tmin) tess_count = tmin;     /* texturiert */
+      if (tess_count < tmin) tess_count = tmin;     /* textured */
     } }
   float s_step = (float)(texv[2].s - texv[0].s) / (float)tess_count;
   float t_step = (float)(texv[2].t - texv[0].t) / (float)tess_count;
@@ -2407,7 +2422,7 @@ int YglTriangleGrowShading_in(YglSprite *input, YglTexture *output, float *color
       ctpos[4].t = ctpos[2].t;
       ctpos[5].s = ctpos[0].s;
       ctpos[5].t = ctpos[0].t + t_step;
-      ctpos[0].r = ctpos[1].r = ctpos[2].r = ctpos[3].r = ctpos[4].r = ctpos[5].r = 0;    // these can stay at 0
+      ctpos[0].r = ctpos[1].r = ctpos[2].r = ctpos[3].r = ctpos[4].r = ctpos[5].r = spd_r;
       ctpos[0].q = ctpos[1].q = ctpos[2].q = ctpos[3].q = ctpos[4].q = ctpos[5].q = 1.0f; // these can stay at 0
 
       // ToDo: color interpolation
@@ -2486,6 +2501,7 @@ int YglQuadGrowShading_in(YglSprite *input, YglTexture *output, float *colors, Y
   float *vtxa;
   float q[4];
   int prg = PG_VFP1_GOURAUDSAHDING;
+  int spd = 0;
   float *pos;
 
   if ((input->blendmode & 0x03) == VDP2_CC_ADD)
@@ -2510,7 +2526,7 @@ int YglQuadGrowShading_in(YglSprite *input, YglTexture *output, float *colors, Y
   }
   else if (input->blendmode == VDP1_COLOR_SPD)
   {
-    prg = PG_VFP1_GOURAUDSAHDING_SPD;
+    spd = 1;   /* drawn with the normal Gouraud program, see spd_r */
   }
 
   if (input->linescreen == 1)
@@ -2610,7 +2626,9 @@ int YglQuadGrowShading_in(YglSprite *input, YglTexture *output, float *colors, Y
 
   program->currentQuad += 12;
 
-  tmp[0].r = tmp[1].r = tmp[2].r = tmp[3].r = tmp[4].r = tmp[5].r = 0; // these can stay at 0
+  /* r carries the SPD flag: the Gouraud shader keeps alpha 0 pixels when r >= 0.5 */
+  const float spd_r = (spd && prg == PG_VFP1_GOURAUDSAHDING) ? 1.0f : 0.0f;
+  tmp[0].r = tmp[1].r = tmp[2].r = tmp[3].r = tmp[4].r = tmp[5].r = spd_r;
   if (input->flip & 0x1)
   {
     tmp[0].s = tmp[3].s = tmp[5].s = (float)((x + input->w) - ATLAS_BIAS);
@@ -3036,10 +3054,10 @@ void YglQuadOffset_in(vdp2draw_struct *input, YglTexture *output, YglCache *c, i
 }
 
 /* Per-level program memo for the tile path. Valid only within ONE Vdp2DrawMapTest call
-   (generation g_ke_gen, YglKachelEbeneBeginn). One entry per priority (0..8 = level
+   (generation g_ke_gen, YglTileLayerBegin). One entry per priority (0..8 = level
    _Ygl->levels[]), because specialprimode == 1 can change the priority per tile. A hit is
    allowed only if YglGetProgram plus the program field block of YglQuadOffset_in would
-   change nothing for this tile (conditions in KeTreffer). On a hit: interuput_texture = 0
+   change nothing for this tile (conditions in TlHit). On a hit: interuput_texture = 0
    (as in YglGetProgram) and corners/texcoords exactly as in YglQuadOffset_in. */
 #include <time.h>
 #include <string.h>
@@ -3049,20 +3067,20 @@ typedef struct {   /* program fields written by YglQuadOffset_in per tile (+ key
   u32 lineTexture, specialcolormode;
   int mosaic[2];
   float cov[4];
-} KeProgFelder;
+} TlProgFields;
 typedef struct {
   unsigned int gen;          /* valid if == g_ke_gen */
   int prgcurrent;
   YglProgram *program;
   int prgid;
   float cov0;                /* color_offset_val[0] = cor / 255.0f, as the regular path writes it */
-  KeProgFelder felder;       /* mode 2 only */
-} KeMemo;
-static KeMemo g_ke_memo[9];
+  TlProgFields fields_val;       /* mode 2 only */
+} TlMemo;
+static TlMemo g_tl_memo[9];
 static unsigned int g_ke_gen = 1;
 
-void YglKachelEbeneBeginn(void) { if (++g_ke_gen == 0) g_ke_gen = 1; }
-static void KeFelderLesen(const YglProgram *pr, KeProgFelder *f) {
+void YglTileLayerBegin(void) { if (++g_ke_gen == 0) g_ke_gen = 1; }
+static void TlFieldsRead(const YglProgram *pr, TlProgFields *f) {
   memset(f, 0, sizeof(*f));
   f->prgid = pr->prgid; f->blendmode = pr->blendmode; f->id = pr->id; f->colornumber = pr->colornumber;
   f->bwin0 = pr->bwin0; f->logwin0 = pr->logwin0; f->bwin1 = pr->bwin1; f->logwin1 = pr->logwin1;
@@ -3073,11 +3091,11 @@ static void KeFelderLesen(const YglProgram *pr, KeProgFelder *f) {
   f->cov[2] = pr->color_offset_val[2]; f->cov[3] = pr->color_offset_val[3];
 }
 /* Side-effect free: the program the regular path would use unchanged for this tile, else NULL. */
-static INLINE YglProgram *KeTreffer(const vdp2draw_struct *input) {
+static INLINE YglProgram *TlHit(const vdp2draw_struct *input) {
   const unsigned int pr = (unsigned int)input->priority;
   if (pr > 8) return NULL;                                   /* YglGetProgram returns NULL for priority > 8 */
   if (input->linescreen == 1) return NULL;                   /* program selection reads Vdp2Regs->CCCTL per tile */
-  const KeMemo *m = &g_ke_memo[pr];
+  const TlMemo *m = &g_tl_memo[pr];
   if (m->gen != g_ke_gen) return NULL;
   YglLevel *level = &_Ygl->levels[pr];
   YglProgram *prog = m->program;
@@ -3089,20 +3107,20 @@ static INLINE YglProgram *KeTreffer(const vdp2draw_struct *input) {
   if ((prog->currentQuad + YGL_MAX_NEED_BUFFER) >= prog->maxQuad) return NULL;                 /* realloc branch */
   return prog;
 }
-static void KeMemoNeu(const vdp2draw_struct *input) {   /* after the regular path: remember its program */
+static void TlMemoNew(const vdp2draw_struct *input) {   /* after the regular path: remember its program */
   const unsigned int pr = (unsigned int)input->priority;
   if (pr > 8 || input->linescreen == 1 || input->uclipmode != 0) return;
   YglLevel *level = &_Ygl->levels[pr];
-  KeMemo *m = &g_ke_memo[pr];
+  TlMemo *m = &g_tl_memo[pr];
   m->prgcurrent = level->prgcurrent;
   m->program = &level->prg[level->prgcurrent];
   m->prgid = m->program->prgid;
   m->cov0 = m->program->color_offset_val[0];
-  KeFelderLesen(m->program, &m->felder);
+  TlFieldsRead(m->program, &m->fields_val);
   m->gen = g_ke_gen;
 }
 /* Corners and texture coordinates; expressions identical to YglQuadOffset_in (from "vHeight ="). */
-static INLINE void KeQuadSchreiben(const vdp2draw_struct *input, float *pos, texturecoordinate_struct *tmp,
+static INLINE void TlQuadWrite(const vdp2draw_struct *input, float *pos, texturecoordinate_struct *tmp,
                                    int cx, int cy, float sx, float sy, unsigned int x, unsigned int y) {
   int vHeight = input->vertices[5] - input->vertices[1];
   pos[0] = (input->vertices[0] - cx) * sx;
@@ -3135,13 +3153,13 @@ static INLINE void KeQuadSchreiben(const vdp2draw_struct *input, float *pos, tex
   tmp[0].q = 1.0f; tmp[1].q = 1.0f; tmp[2].q = 1.0f; tmp[3].q = 1.0f; tmp[4].q = 1.0f; tmp[5].q = 1.0f;
 }
 /* Replacement for YglQuadOffset (cash_flg 1) / YglCachedQuadOffset (cash_flg 0) on the tile path, only for modus 1/2. */
-void YglKachelQuad(vdp2draw_struct *input, YglTexture *output, YglCache *c, int cx, int cy, float sx, float sy, int cash_flg, int modus)
+void YglTileQuad(vdp2draw_struct *input, YglTexture *output, YglCache *c, int cx, int cy, float sx, float sy, int cash_flg, int mode_val)
 {
-  YglProgram *vp = KeTreffer(input);
-  if (modus != 2) {
+  YglProgram *vp = TlHit(input);
+  if (mode_val != 2) {
     if (vp == NULL) {                      /* slow path = regular path, then memo */
       YglQuadOffset_in(input, output, c, cx, cy, sx, sy, cash_flg);
-      KeMemoNeu(input);
+      TlMemoNew(input);
       return;
     }
     {
@@ -3152,7 +3170,7 @@ void YglKachelQuad(vdp2draw_struct *input, YglTexture *output, YglCache *c, int 
       vp->currentQuad += 12;
       if (output != NULL) YglTMAllocate(_Ygl->texture_manager, output, input->cellw, input->cellh, &x, &y);
       else { x = c->x; y = c->y; }
-      KeQuadSchreiben(input, pos, tmp, cx, cy, sx, sy, x, y);
+      TlQuadWrite(input, pos, tmp, cx, cy, sx, sy, x, y);
       if (c != NULL && cash_flg == 1) { c->x = x; c->y = y; }
     }
     return;
@@ -3162,23 +3180,23 @@ void YglKachelQuad(vdp2draw_struct *input, YglTexture *output, YglCache *c, int 
     const int cq0 = vp ? vp->currentQuad : 0;
     const unsigned int pr = (unsigned int)input->priority;
     YglQuadOffset_in(input, output, c, cx, cy, sx, sy, cash_flg);
-    if (vp == NULL) { KeMemoNeu(input); return; }
+    if (vp == NULL) { TlMemoNew(input); return; }
     {
-      KeMemo *m = &g_ke_memo[pr];
+      TlMemo *m = &g_tl_memo[pr];
       YglLevel *level = &_Ygl->levels[pr];
-      YglProgram *alt = &level->prg[level->prgcurrent];
-      KeProgFelder fa;
+      YglProgram *prev_val = &level->prg[level->prgcurrent];
+      TlProgFields fa;
       int art = 0;
-      KeFelderLesen(alt, &fa);
-      if (alt != vp || alt->prgid != m->prgid) art = 1;
-      else if (memcmp(&fa, &m->felder, sizeof(fa)) != 0) art = 2;
+      TlFieldsRead(prev_val, &fa);
+      if (prev_val != vp || prev_val->prgid != m->prgid) art = 1;
+      else if (memcmp(&fa, &m->fields_val, sizeof(fa)) != 0) art = 2;
       else {
         float pos_n[12];
         texturecoordinate_struct tc_n[6];
         memset(pos_n, 0, sizeof(pos_n)); memset(tc_n, 0, sizeof(tc_n));
-        KeQuadSchreiben(input, pos_n, tc_n, cx, cy, sx, sy, c->x, c->y);
-        if (memcmp(pos_n, alt->quads + cq0, sizeof(pos_n)) != 0) art = 3;
-        else if (memcmp(tc_n, alt->textcoords + cq0 * 2, sizeof(tc_n)) != 0) art = 4;
+        TlQuadWrite(input, pos_n, tc_n, cx, cy, sx, sy, c->x, c->y);
+        if (memcmp(pos_n, prev_val->quads + cq0, sizeof(pos_n)) != 0) art = 3;
+        else if (memcmp(tc_n, prev_val->textcoords + cq0 * 2, sizeof(tc_n)) != 0) art = 4;
       }
       if (art) {
         m->gen = 0;                        /* drop the memo: the next tile takes the regular path and re-memoizes */
@@ -3205,7 +3223,7 @@ void YglCachedQuad(vdp2draw_struct *input, YglCache *cache)
    atlas position each frame (which would fill half the atlas per frame and flush the texture
    cache). Same pattern as RbgSlotAllocate (vidogl.c) for RBG. Returns like YglQuad_in;
    output->textdata points into the currently mapped slot. */
-int YglQuadSlot(vdp2draw_struct *input, YglTexture *output, YglCache *c, u64 key)
+int YglQuadSlot(vdp2draw_struct *input, YglTexture *output, YglCache *c, u64 key, int quad_only)
 {
   extern int g_texcache_persist;
   YglTextureManager *tm = _Ygl->texture_manager;
@@ -3217,9 +3235,13 @@ int YglQuadSlot(vdp2draw_struct *input, YglTexture *output, YglCache *c, u64 key
     const unsigned int sx = (unsigned int)sc.x, sy = (unsigned int)sc.y;
     r = YglQuad_in(input, NULL, &sc, 0);
     if (r < 0) return r;
+    if (quad_only) {   /* content unchanged: draw the quad only, no raster, no dirty rect, no upload */
+      output->textdata = NULL; output->w = 0;
+      return 1;
+    }
     output->w = tm->width - input->cellw;
     output->textdata = tm->texture + sy * tm->width + sx;
-    if (InterHalbAktiv() && DirtyBandAn()) YglTMDirtyRectXY(tm, (int)sx, (int)sy, (int)input->cellw, (int)input->cellh);
+    if (InterlaceHalfActive()) YglTMDirtyRectXY(tm, (int)sx, (int)sy, (int)input->cellw, (int)input->cellh);
     else YglTMDirtyRect(tm, (int)sy, (int)input->cellh);
     return 0;
   }
@@ -3534,9 +3556,9 @@ int YglQuadRbg0(vdp2draw_struct *input, YglTexture *output, YglCache *c, YglCach
      both layers draw with the same wrong texture. Force a new slot on change; the classic
      path (field always 0) is unaffected. */
   if (_Ygl->rbg_use_compute_shader) {
-    int iv_neu = (rbg_type == 0) ? 1 : 2;
+    int iv_new = (rbg_type == 0) ? 1 : 2;
     if (program->currentQuad > 0 && program->interuput_texture != 0 &&
-        program->interuput_texture != iv_neu) {
+        program->interuput_texture != iv_new) {
       YglLevel *lvl_rbg = &_Ygl->levels[((YglSprite *)input)->priority];
       YglProgramChange(lvl_rbg, prg);
       program = &lvl_rbg->prg[lvl_rbg->prgcurrent];
@@ -3756,9 +3778,9 @@ void YglEraseWriteVDP1(void)
          fast clear (load+store instead of tile clear), so clear without scissor. 0.5 px
          tolerance against float rounding in the ratio multiplications; the guard that
          disables the scissor after the clear stays in place. */
-      const int voll_zweig = (left <= 0.5f && bottom <= 0.5f &&
+      const int full_branch = (left <= 0.5f && bottom <= 0.5f &&
           right >= (float)_Ygl->width - 0.5f && top >= (float)_Ygl->height - 0.5f);
-      if (voll_zweig) {
+      if (full_branch) {
         glDisable(GL_SCISSOR_TEST);
       } else {
         glEnable(GL_SCISSOR_TEST);
@@ -4202,16 +4224,9 @@ void YglUpdateVdp2Reg()
   glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
 
-/* Debug switch (compiled off): leave the VDP1 framebuffer out of the composition. */
-static int v1aus_an(void) {
-  return 0;   /* fixed: diagnostics off */
-}
-
 
 void YglRenderFrameBuffer(int from, int to)
 {
-  if (v1aus_an()) return;
-
   GLint vertices[12];
   GLfloat texcord[12];
   float offsetcol[4];
@@ -4447,14 +4462,9 @@ void YglRenderFrameBuffer(int from, int to)
     Ygl_uniformVDP2DrawFramebuffer(&_Ygl->renderfb, (float)(from) / 10.0f, (float)(to) / 10.0f, offsetcol, 0);
     /* Ygl_uniformVDP2DrawFramebuffer switches the program; without the matrix and vertices
        the second surface is drawn shifted (double image, seen in Cotton Boomerang). */
-    {
-      static const int ccw_an = 1;   /* fixed: enabled */
-      if (ccw_an) {
-        glUniformMatrix4fv(_Ygl->renderfb.mtxModelView, 1, GL_FALSE, (GLfloat *)result.m);
-        glVertexAttribPointer(_Ygl->renderfb.vertexp, 2, GL_INT, GL_FALSE, 0, (GLvoid *)vertices);
-        glVertexAttribPointer(_Ygl->renderfb.texcoordp, 2, GL_FLOAT, GL_FALSE, 0, (GLvoid *)texcord);
-      }
-    }
+    glUniformMatrix4fv(_Ygl->renderfb.mtxModelView, 1, GL_FALSE, (GLfloat *)result.m);
+    glVertexAttribPointer(_Ygl->renderfb.vertexp, 2, GL_INT, GL_FALSE, 0, (GLvoid *)vertices);
+    glVertexAttribPointer(_Ygl->renderfb.texcoordp, 2, GL_FLOAT, GL_FALSE, 0, (GLvoid *)texcord);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     glDepthFunc(GL_GEQUAL);
@@ -4522,8 +4532,6 @@ void YglRenderFrameBuffer(int from, int to)
 
 void YglRenderFrameBufferShadow()
 {
-  if (v1aus_an()) return;   /* the shadow pass reads the VDP1 buffer as well */
-
   GLint vertices[12];
   GLfloat texcord[12];
   float offsetcol[4];
@@ -4601,7 +4609,7 @@ void YglSetClearColor(float r, float g, float b)
    before the OSD and the swap. No buffer state is involved, so there is no flicker.
    Exceptions: TVMR&2 (rotation mode, e.g. Shienryu, where the rectangle is not a playfield),
    widths other than 320/352, and rectangles narrower than half the width. */
-static void RandSchwarz(int gw, int gh)
+static void EdgeBlack(int gw, int gh)
 {
   if (Vdp1Regs == NULL) return;
   const int rw = _Ygl->rwidth;
@@ -4639,7 +4647,7 @@ void YglRender(void)
   YglInvalidateProgramCache();
   FrameProfileAdd("YglRender start");
 
-  if ((Vdp2TvmdFuerRender() & 0x8000) == 0)
+  if ((Vdp2TvmdForRender() & 0x8000) == 0)
   {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -4946,7 +4954,7 @@ void YglRender(void)
   }
 render_finish:
   glViewport(_Ygl->originx, _Ygl->originy, GlWidth, GlHeight);
-  RandSchwarz(GlWidth, GlHeight);
+  EdgeBlack(GlWidth, GlHeight);
   YglUseProgramCached(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
